@@ -100,7 +100,7 @@ class Domain:
 
         # Trace the path from destination to source using parent cells
         while not (self.map[row][col].parent_i == row and self.map[row][col].parent_j == col):
-            path.append([row, col])
+            path.append(self.Coordinate(row, col))
             temp_row = self.map[row][col].parent_i
             temp_col = self.map[row][col].parent_j
             row = temp_row
@@ -221,21 +221,30 @@ class Domain:
                 normalized_repelval = 1- max(0, min(normalized_repelval, 1))
                 # Assign color based on `contains`
                 if cell.contains == self.containables[0]:
-                    grid_color[i, j] = [0, 0, 0]  # Black for pon
+                    grid_color[j, i] = [0, 0, 0]  # Black for pon
                 elif cell.contains == self.containables[1]:
-                    grid_color[i, j] = [1, 0, 0]  # Red for target
+                    grid_color[j, i] = [1, 0, 0]  # Red for target
                 elif cell.contains == self.containables[2]:
-                    grid_color[i, j] = [0, 1, 0]  # Green for waypoint
+                    grid_color[j, i] = [0, 1, 0]  # Green for waypoint
                 else:
                     """if normalized_weight != 1:
                         print(f"Warning: Cell at ({i}, {j}) has invalid weight: {cell.weight}")"""
                     # Handle cells that are neither targets nor blockages:
                     # Normalize weight to a range of 0 to 1 for grayscale representation
-                    grid_color[i, j] = [1, normalized_repelval, normalized_attractval]  # Grayscale
+                    grid_color[j, i] = [1, normalized_repelval, normalized_attractval]  # Grayscale
 
         # Create the plot
         plt.figure(figsize=(10, 10))
         plt.imshow(grid_color, interpolation="nearest")
-        plt.axis("off")  # Hide the axis
+        # Add labels to the axes
+        plt.xlabel("X Coordinate")
+        plt.ylabel("Y Coordinate")
+
+        # Invert the Y-axis to place origin (0, 0) at the bottom-left
+        plt.gca().invert_yaxis()
+
+        # Add title and axis ticks
         plt.title("Domain Visualization")
+
+        # Show plot
         plt.show()

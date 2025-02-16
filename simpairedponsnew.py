@@ -122,9 +122,6 @@ def hermite_spline(points, heading):
 
     spline_points = np.array(spline_points)
 
-    print("Spline points:", spline_points)
-    print("Shape of spline points:", spline_points.shape)
-
     # Plot the splines and tangents
     if spline_points is not None:
         plt.plot(spline_points[:, 0], spline_points[:, 1], label="Hermite Spline Path")
@@ -141,13 +138,13 @@ if __name__ == '__main__':
 
     size = 300
 
-    base = (size/2, size/2)
+    base = (round(size/2), round(size/2))
     heading =  random.randint(0, 359)
     paired_pons = generate_paired_pons(base, heading, num_pairs=8)
 
 
     obs_list = []
-    targets = []
+    targets_current = []
     targets_distances = {}
     targets_old = []
 
@@ -157,14 +154,11 @@ if __name__ == '__main__':
             area[pon1[0]][pon1[1]] = 1
             area[pon2[0]][pon2[1]] = 1
 
-        obs_list_new = []
-        targets_new = []
         for i in range(4):
             obstacles = lidar(area, base, ((heading-45)%360, (heading+45)%360))
             for obs in obstacles:
                 if obs not in obs_list:
                     obs_list.append(obs)
-                    obs_list_new.append(obs)
             heading += 90
 
         for x in range(len(obs_list)):
@@ -172,27 +166,45 @@ if __name__ == '__main__':
                 distancex = abs(obs_list[x][0]-obs_list[y][0])
                 distancey = abs(obs_list[x][1]-obs_list[y][1])
                 distance = round(math.sqrt(distancex**2+distancey**2))
-                if 9.5 < distance < 10.5:
+                if 9 <= distance <= 11:
                     targetrow = round((obs_list[x][0]+obs_list[y][0])/2)
                     targetcol = round((obs_list[x][1]+obs_list[y][1])/2)
                     target_distancex = abs(targetrow-base[0])
                     target_distancey = abs(targetcol-base[1])
                     target_distance = round(math.sqrt(target_distancex**2+target_distancey**2))
                     target = (targetrow, targetcol)
-                    if target not in targets and target not in targets_old:
-                        targets.append(target)
+                    if target not in targets_current and target not in targets_old:
+                        targets_current.append(target)
                         targets_distances.update({target: target_distance})
-                        targets_new.append(target)
-        sorted_targets = sorted(targets, key=lambda x: targets_distances[x])
+
+        current = base
+        targets_current_copy = targets_current.copy()
+        targets_current_sorted = []
+        for _ in range(len(targets_current)):
+            index_closest = 0
+            distance_closest = float('inf')
+            for x in range(len(targets_current_copy)):
+                distancex = targets_current_copy[x][0] - current[0]
+                distancey = targets_current_copy[x][1] - current[1]
+                distance = round(math.sqrt(distancex ** 2 + distancey ** 2))
+                if distance < distance_closest:
+                    index_closest = x
+                    distance_closest = distance
+            current = targets_current_copy.pop(index_closest)
+            targets_current_sorted.append(current)
+
+        targets_current = targets_current_sorted
+
+        sorted_targets = sorted(targets_current, key=lambda x: targets_distances[x])
         domain = Domain(size, size)
 
-        for obs in obs_list_new:
-            domain.updateMap(domain.Coordinate(obs[0], obs[1]), value=25, radius=10, is_repellor=True)
+        for obs in obs_list:
+            domain.updateMap(domain.Coordinate(obs[0], obs[1]), contains=domain.containables[0], blocked=True, value=25, radius=10, is_repellor=True)
 
-        for target in targets_new:
-            domain.updateMap(domain.Coordinate(int(target[0]), int(target[1])), value=25, radius=10, is_attractor=True)
+        for target in targets_current:
+            domain.updateMap(domain.Coordinate(int(target[0]), int(target[1])), contains=domain.containables[1],  value=25, radius=10, is_attractor=True)
 
-        spline_points = hermite_spline(np.array([base] + sorted_targets), heading)
+        spline_points = hermite_spline(np.array([base] + targets_current), heading)
         spline_points_rounded = []
         for point in spline_points:
             point = (round(point[0]), round(point[1]))
@@ -230,19 +242,28 @@ if __name__ == '__main__':
         # Display the plot
         plt.show()
 
+        pos = domain.Coordinate(int(base[0]), int(base[1]))
+        wp_list = []
+        for target in targets_current:
+            next_pos = domain.Coordinate(int(target[0]), int(target[1]))
+            wp_segment = domain.a_star_search(pos, next_pos)
+            if wp_segment is not None:
+                for waypoint in wp_segment:
+                    if waypoint not in wp_list:
+                        wp_list.append(waypoint)
+            pos = next_pos
+
+        if wp_list is not None:
+            for x in wp_list:
+                if domain.map[x.row][x.col].contains == "empty":
+                    domain.updateCell(x, contains=domain.containables[2])
+
+        domain.plotMap()
+
         cond = input("Press Enter to continue, 'end' to terminate...")
 
         if cond == "":  # Enter key
-            index_closest = 0
-            distance_closest = float('inf')
-            for x in range(len(targets)):
-                distancex = targets[x][0] - base[0]
-                distancey = targets[x][1] - base[1]
-                distance = round(math.sqrt(distancex ** 2 + distancey ** 2))
-                if distance < distance_closest:
-                    index_closest = x
-                    distance_closest = distance
-            base = targets.pop(index_closest)
+            base = targets_current.pop(0)
             targets_old.append(base)
         elif cond.lower() == "end":  # User types 'end' to terminate
             break
