@@ -1,4 +1,3 @@
-import math
 import numpy as np
 import matplotlib.pyplot as plt
 import heapq
@@ -15,15 +14,17 @@ class Domain:
             # Parent cell's column index
             self.parent_j = 0
 
-    def __init__(self, row, col):
-        if not isinstance(row, int) or not isinstance(col, int):
+    def __init__(self, nrow, ncol, containables=None):
+        if not isinstance(nrow, int) or not isinstance(ncol, int):
             raise TypeError("Row and column must be integers.")
-        if row <= 0 or col <= 0:
-            raise ValueError("Parameters 'row' and 'col' must be positive numbers.")
-        self.map = [[self.Cell() for _ in range(col)] for _ in range(row)]
-        self.nrow = row
-        self.ncol = col
-        self.containables = ("pon", "target", "waypoint")
+        if nrow <= 0 or ncol <= 0:
+            raise ValueError("Row and column  must be positive numbers.")
+        self.map = [[self.Cell() for _ in range(ncol)] for _ in range(nrow)]
+        self.nrow = nrow
+        self.ncol = ncol
+        if containables is None:
+            containables = ("pon", "target", "waypoint")
+        self.containables = containables
 
     class Coordinate:
         def __init__(self, row, col):
@@ -95,8 +96,8 @@ class Domain:
     # Trace the path from source to destination
     def trace_path(self, dest: Coordinate):
         path = []
-        row = dest.row
-        col = dest.col
+        row = self.map[dest.row][dest.col].parent_i
+        col = self.map[dest.row][dest.col].parent_j
 
         # Trace the path from destination to source using parent cells
         while not (self.map[row][col].parent_i == row and self.map[row][col].parent_j == col):
@@ -106,15 +107,15 @@ class Domain:
             row = temp_row
             col = temp_col
 
-        # Add the source cell to the path
-        path.append(self.Coordinate(row, col))
+        # Do not add the source cell to the path
+        # path.append(self.Coordinate(row, col))
         # Reverse the path to get the path from source to destination
         path.reverse()
 
         return path
 
     # Implement the A* search algorithm
-    def a_star_search(self, src: Coordinate, dest: Coordinate):
+    def a_star_search(self, src: Coordinate, dest: Coordinate, corridor=None):
         # Check if the source and destination are valid
         if not self.isValid(src) or not self.isValid(dest):
             print("Source or destination is invalid")
@@ -143,9 +144,6 @@ class Domain:
         open_list = []
         heapq.heappush(open_list, (0.0, i, j))
 
-        # Initialize the flag for whether destination is found
-        found_dest = False
-
         # Main loop of A* search algorithm
         while len(open_list) > 0:
             # Pop the cell with the smallest f value from the open list
@@ -157,22 +155,19 @@ class Domain:
             closed_list[i][j] = True
 
             # For each direction, check the successors
-            directions = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+            directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]#, (1, 1), (1, -1), (-1, 1), (-1, -1)]
             for direction in directions:
                 new_i = i + direction[0]
                 new_j = j + direction[1]
 
                 # If the successor is valid, unblocked, and not visited
-                if self.isValid(self.Coordinate(new_i, new_j)) and not closed_list[new_i][new_j]:
-                    # If the successor is the destination
-                    if new_i == dest.row and new_j == dest.col:
+                if not closed_list[new_i][new_j]:
+                    # If the successor is the destination or out of bounds
+                    if new_i == dest.row and new_j == dest.col or not self.isValid(self.Coordinate(new_i, new_j)):
                         # Set the parent of the destination cell
                         self.map[new_i][new_j].parent_i = i
                         self.map[new_i][new_j].parent_j = j
-                        print("The destination cell is found")
-                        # Trace and print the path from source to destination
-                        path = self.trace_path(dest)
-                        found_dest = True
+                        path = self.trace_path(self.Coordinate(new_i, new_j))
                         return path
                     else:
                         distance = (direction[0] ** 2 + direction[1] ** 2) ** 0.5
@@ -181,8 +176,18 @@ class Domain:
                         h_new = ((new_i - dest.row) ** 2 + (new_j - dest.col) ** 2) ** 0.5
                         f_new = g_new + h_new
 
-                        #FARK BURADA, haritadaki ağırlığı eklememin sayesinde engellere yapışmadan gidebiliyor
                         f_new += - self.map[new_i][new_j].attractval + self.map[new_i][new_j].repelval
+
+                        if corridor is not None:
+                            query_point = np.array([new_i, new_j])
+                            lcf_penalty = float('inf')
+
+                            for idx in range(len(corridor)):
+                                d = np.linalg.norm(query_point - np.array([corridor[idx][0], corridor[idx][1]]))
+                                if d < lcf_penalty:
+                                    lcf_penalty = d
+
+                            f_new += lcf_penalty ** 4
 
                         # If the cell is not in the open list or the new f value is smaller
                         if not self.map[new_i][new_j].blocked and (cell_costs[new_i][new_j].f == float('inf') or cell_costs[new_i][new_j].f > f_new):
@@ -195,9 +200,7 @@ class Domain:
                             self.map[new_i][new_j].parent_i = i
                             self.map[new_i][new_j].parent_j = j
 
-        # If the destination is not found after visiting all cells
-        if not found_dest:
-            print("Failed to find the destination cell")
+        return None
 
     def writeMapToFile(self, filename):
         with open(filename, "w") as file:
@@ -207,7 +210,15 @@ class Domain:
                     file.write("\t")
                 file.write("\n")
 
-    def plotMap(self):
+    def plotMap(self, colors=None):
+        # Use default values if parameters are not provided
+        if colors is None:
+            colors = {
+                "pon": [0, 0, 0],  # Black
+                "target": [0, 0, 1],  # Blue
+                "waypoint": [0, 1, 0]  # Green
+            }
+
         # Initialize the grid for the entire domain based on the number of rows and columns
         grid_color = np.zeros((self.nrow, self.ncol, 3))  # RGB color space
 
@@ -215,36 +226,22 @@ class Domain:
         for i in range(self.nrow):
             for j in range(self.ncol):
                 cell = self.map[i][j]  # Access the Cell object
-                normalized_attractval = (cell.attractval) / 50
-                normalized_attractval = 1 - max(0, min(normalized_attractval, 1))  # Clamp values to [0, 1]
-                normalized_repelval = (cell.repelval) / 50
-                normalized_repelval = 1- max(0, min(normalized_repelval, 1))
                 # Assign color based on `contains`
-                if cell.contains == self.containables[0]:
-                    grid_color[j, i] = [0, 0, 0]  # Black for pon
-                elif cell.contains == self.containables[1]:
-                    grid_color[j, i] = [1, 0, 0]  # Red for target
-                elif cell.contains == self.containables[2]:
-                    grid_color[j, i] = [0, 1, 0]  # Green for waypoint
+                if cell.contains in colors:
+                    grid_color[j, i] = colors[cell.contains]
                 else:
-                    """if normalized_weight != 1:
-                        print(f"Warning: Cell at ({i}, {j}) has invalid weight: {cell.weight}")"""
-                    # Handle cells that are neither targets nor blockages:
-                    # Normalize weight to a range of 0 to 1 for grayscale representation
+                    normalized_attractval = (cell.attractval) / 50
+                    normalized_attractval = 1 - max(0, min(normalized_attractval, 1))  # Clamp values to [0, 1]
+                    normalized_repelval = (cell.repelval) / 50
+                    normalized_repelval = 1 - max(0, min(normalized_repelval, 1))
+                    # Handle cells that are neither targets nor blockages
                     grid_color[j, i] = [1, normalized_repelval, normalized_attractval]  # Grayscale
 
         # Create the plot
         plt.figure(figsize=(10, 10))
         plt.imshow(grid_color, interpolation="nearest")
-        # Add labels to the axes
         plt.xlabel("X Coordinate")
         plt.ylabel("Y Coordinate")
-
-        # Invert the Y-axis to place origin (0, 0) at the bottom-left
         plt.gca().invert_yaxis()
-
-        # Add title and axis ticks
         plt.title("Domain Visualization")
-
-        # Show plot
         plt.show()
