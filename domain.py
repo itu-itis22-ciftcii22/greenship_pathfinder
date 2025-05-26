@@ -72,7 +72,7 @@ class Domain:
                     distance = ((i - x) ** 2 + (j - y) ** 2) ** 0.5  # Euclidean distance
                     if distance <= radius:
                         # Apply a falloff formula to calculate the value for the neighbor
-                        new_value = value * (1 - distance / radius)
+                        new_value = np.exp(np.log(value)*(radius-distance)/(radius-1))
                         # Add the value to the map (or modify existing value)
                         if (new_value > self.map[x][y].attractval and is_attractor) or (new_value > self.map[x][y].repelval and is_repellor):
                             self.updateCell(self.Coordinate(x, y), value=new_value, is_attractor=is_attractor, is_repellor=is_repellor)
@@ -161,9 +161,9 @@ class Domain:
                 new_j = j + direction[1]
 
                 # If the successor is valid, unblocked, and not visited
-                if not closed_list[new_i][new_j]:
+                if self.isValid(self.Coordinate(new_i, new_j)) and not self.map[new_i][new_j].blocked and not closed_list[new_i][new_j]:
                     # If the successor is the destination or out of bounds
-                    if new_i == dest.row and new_j == dest.col or not self.isValid(self.Coordinate(new_i, new_j)):
+                    if new_i == dest.row and new_j == dest.col:
                         # Set the parent of the destination cell
                         self.map[new_i][new_j].parent_i = i
                         self.map[new_i][new_j].parent_j = j
@@ -176,9 +176,9 @@ class Domain:
                         h_new = ((new_i - dest.row) ** 2 + (new_j - dest.col) ** 2) ** 0.5
                         f_new = g_new + h_new
 
-                        f_new += - self.map[new_i][new_j].attractval + self.map[new_i][new_j].repelval
+                        f_new += -self.map[new_i][new_j].attractval + self.map[new_i][new_j].repelval
 
-                        if corridor is not None:
+                        if len(corridor) > 0:
                             query_point = np.array([new_i, new_j])
                             lcf_penalty = float('inf')
 
@@ -187,10 +187,10 @@ class Domain:
                                 if d < lcf_penalty:
                                     lcf_penalty = d
 
-                            f_new += lcf_penalty ** 4
+                            f_new += lcf_penalty ** 2
 
                         # If the cell is not in the open list or the new f value is smaller
-                        if not self.map[new_i][new_j].blocked and (cell_costs[new_i][new_j].f == float('inf') or cell_costs[new_i][new_j].f > f_new):
+                        if (cell_costs[new_i][new_j].f > f_new):
                             # Add the cell to the open list
                             heapq.heappush(open_list, (f_new, new_i, new_j))
                             # Update the cell details
@@ -200,7 +200,8 @@ class Domain:
                             self.map[new_i][new_j].parent_i = i
                             self.map[new_i][new_j].parent_j = j
 
-        return None
+        path = self.trace_path(self.Coordinate(i, j))
+        return path
 
     def writeMapToFile(self, filename):
         with open(filename, "w") as file:
@@ -210,7 +211,7 @@ class Domain:
                     file.write("\t")
                 file.write("\n")
 
-    def plotMap(self, colors=None):
+    def plotMap(self, maxvalue, colors=None ):
         # Use default values if parameters are not provided
         if colors is None:
             colors = {
@@ -220,7 +221,7 @@ class Domain:
             }
 
         # Initialize the grid for the entire domain based on the number of rows and columns
-        grid_color = np.zeros((self.nrow, self.ncol, 3))  # RGB color space
+        grid_color = np.zeros((self.ncol, self.nrow, 3))  # RGB color space
 
         # Iterate over all cells in the domain
         for i in range(self.nrow):
@@ -230,16 +231,16 @@ class Domain:
                 if cell.contains in colors:
                     grid_color[j, i] = colors[cell.contains]
                 else:
-                    normalized_attractval = (cell.attractval) / 50
+                    normalized_attractval = (cell.attractval) / maxvalue
                     normalized_attractval = 1 - max(0, min(normalized_attractval, 1))  # Clamp values to [0, 1]
-                    normalized_repelval = (cell.repelval) / 50
+                    normalized_repelval = (cell.repelval) / maxvalue
                     normalized_repelval = 1 - max(0, min(normalized_repelval, 1))
                     # Handle cells that are neither targets nor blockages
-                    grid_color[j, i] = [1, normalized_repelval, normalized_attractval]  # Grayscale
+                    grid_color[j, i] = [1, normalized_repelval, normalized_repelval]  # Grayscale
 
         # Create the plot
-        plt.figure(figsize=(10, 10))
-        plt.imshow(grid_color, interpolation="nearest")
+        plt.figure(figsize = (10, 15 / (self.nrow / self.ncol)))
+        plt.imshow(grid_color)#, interpolation="nearest")
         plt.xlabel("X Coordinate")
         plt.ylabel("Y Coordinate")
         plt.gca().invert_yaxis()
