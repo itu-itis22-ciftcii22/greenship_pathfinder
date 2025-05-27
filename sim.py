@@ -1,11 +1,9 @@
 from domain import Domain
 from vehicle import Vehicle
-from path_finder import PathFinder
 
 import signal
 import sys
 import random
-import matplotlib.pyplot as plt
 
 def clean_exit(signum, frame):
     global vehicle
@@ -17,6 +15,23 @@ def clean_exit(signum, frame):
 signal.signal(signal.SIGINT, clean_exit)
 signal.signal(signal.SIGTERM, clean_exit)
 
+def findRelativePoint(distance, angle, heading, x_base=0, y_base=0):
+    # Calculate the total angle in degrees (account for clockwise direction)
+    total_angle = -(angle + heading)  # Negative to convert clockwise to counterclockwise
+
+    # Convert angle to radians
+    total_angle_rad = math.radians(total_angle)
+
+    # Calculate displacements
+    x_displacement = distance * math.cos(total_angle_rad)
+    y_displacement = distance * math.sin(total_angle_rad)
+
+    # Add displacements to the base-point coordinates
+    x = x_base + x_displacement
+    y = y_base + y_displacement
+
+    return int(x), int(y)
+
 def generatePons(degree2, local, number):
     ponlist = []
     random.seed()
@@ -25,8 +40,8 @@ def generatePons(degree2, local, number):
         distance = int(random.random()*100)
         random.seed()
         degree1 = int(random.random()*360)
-        pon = Domain.findRelativePoint(distance, degree1, degree2, local[0], local[1])
-        if not pon[0] == local[0] and not pon[1] == local[1]:
+        pon = findRelativePoint(distance, degree1, degree2, local.row, local.col)
+        if not pon[0] == local.row and not pon[1] == local.col:
             ponlist.append(pon)
     return ponlist
 
@@ -51,16 +66,42 @@ def ned_to_global_scaled(origin_lat, origin_lon, offset_n, offset_e):
     # Scale latitude and longitude by 10^7
     latitude_scaled = int(new_lat)
     longitude_scaled = int(new_lon)
-    hf
+
     return latitude_scaled, longitude_scaled
+
+def global_scaled_to_ned(origin_lat, origin_lon, target_lat_scaled, target_lon_scaled):
+    """
+    Converts global coordinates (scaled by 1e7) to NED frame offsets in meters.
+
+    :param origin_lat: Origin latitude in degrees
+    :param origin_lon: Origin longitude in degrees
+    :param target_lat_scaled: Target latitude in degrees * 1e7
+    :param target_lon_scaled: Target longitude in degrees * 1e7
+    :return: (offset_n, offset_e) in meters
+    """
+    R = 6378137.0  # Earth radius in meters
+
+    # Convert scaled lat/lon to degrees
+    target_lat = target_lat_scaled * 1e-7
+    target_lon = target_lon_scaled * 1e-7
+
+    # Compute offsets
+    delta_lat = target_lat - origin_lat
+    delta_lon = target_lon - origin_lon
+
+    offset_n = (delta_lat * math.pi / 180) * R
+    offset_e = (delta_lon * math.pi / 180) * R * math.cos(math.radians(origin_lat))
+
+    return offset_n, offset_e
+
 
 
 if __name__ == '__main__':
-    vehicle = Vehicle("udpin:localhost:14550")  # Aracın bağlantı noktası
-    vehicle.arm()
-    vehicle.connection.set_mode_loiter()
+    vehicle = Vehicle("udpin:localhost:14550")
+    vehicle.waitAuto()
+    missions = vehicle.getWPList()
 
-    domain = Domain(100, 100, float("inf"))
+    domain = Domain(100, 100)
 
     base = (50, 50)
 
@@ -70,43 +111,42 @@ if __name__ == '__main__':
 
     ponlist = generatePons(heading, base, 100)
     for pon in ponlist:
-        domain.updateMap(pon, 15)
-    
-    endx = -1
-    endy = -1
-    while not domain.is_valid(endx, endy) or not domain.is_unblocked(endx, endy):
-        random.seed()
-        endx = int(random.random()*50)
-        random.seed()
-        endy = int(random.random()*50)
-    endpoint = (endx, endy)
+            domain.updateMap(domain.Coordinate(pon[0], pon[1]), contains=domain.containables[0], blocked=True,
+                             value=50, radius=5, is_repellor=True)
 
-    pathfind = PathFinder(domain.nrow, domain.ncol, domain.blockval, domain.map)
-    WPList = pathfind.a_star_search(base, endpoint)
-    
-    if WPList is None:
-        sys.exit(1)
+    locat = vehicle.getLocationGlobal()
+    missions_ned = []
+    for mission in missions:
+        mission_ned = global_scaled_to_ned(locat.lat, locat.lon, mission.x, mission.y)
+        missions_ned.append((mission_ned[0] + base[0], mission_ned[1] + base[1]))
 
-    for x in WPList:
-        domain.map[x[0]][x[1]] = -100
-    #domain.map[WPList[0][0]][WPList[0][1]] = -100
+    wps = []
+    pos = base
+    for mission_ned in missions_ned:
+        wps_segment= domain.a_star_search(domain.Coordinate(pos[0], pos[1]), domain.Coordinate(mission_ned[0], mission_ned[1]))
+        if wps_segment is None:
+            sys.exit(1)
+        for wp in wps_segment:
+            wps.append(wp)
+        pos = missions_ned
 
-    domain.writeMapToFile("map.txt")
+    """domain_copy = copy.deepcopy(domain)
+
+    for x in wp_list:
+        if domain.isValid(x) and domain.map[x.row][x.col].contains == "empty":
+            domain_copy.updateCell(x, contains=domain.containables[2])
+
+
+    domain_copy.plotMap(50)"""
     
     pos = vehicle.getLocationGlobal()
-    for i in range(len(WPList)):
-        WPList[i] = [WPList[i][0] - base[0], WPList[i][1] - base[1]]
-        WPList[i] = ned_to_global_scaled(pos.lat, pos.lon, WPList[i][0], WPList[i][1])
+    for i in range(len(wps)):
+        wps[i] = [wps[i].row - base[0], wps[i].col - base[1]]
+        wps[i] = ned_to_global_scaled(pos.lat, pos.lon, wps[i][0], wps[i][1])
 
 
-    vehicle.assignWP(WPList)
+    vehicle.assignWPs(wps)
+
+    vehicle.arm()
 
     vehicle.connection.close()
-
-    plt.figure(figsize=(10, 10))
-    plt.imshow(domain.map, cmap='RdBu', interpolation='nearest', vmin=-100, vmax=100, origin='lower')  # Choose a colormap like 'viridis'
-    plt.gca().set_aspect('auto')
-    #plt.colorbar(label='Value')  # Add a color bar for reference
-    plt.title("Weighted Grid with Path (Obstacles marked as blue, Path marked as red)")
-    plt.savefig("path_visualization.jpg", bbox_inches='tight')
-    plt.show()

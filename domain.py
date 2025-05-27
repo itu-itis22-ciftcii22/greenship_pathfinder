@@ -23,8 +23,9 @@ class Domain:
         self.nrow = nrow
         self.ncol = ncol
         if containables is None:
-            containables = ("pon", "target", "waypoint")
-        self.containables = containables
+            self.containables = ("pon", "target", "waypoint")
+        else:
+            self.containables = containables
 
     class Coordinate:
         def __init__(self, row, col):
@@ -76,22 +77,6 @@ class Domain:
                         # Add the value to the map (or modify existing value)
                         if (new_value > self.map[x][y].attractval and is_attractor) or (new_value > self.map[x][y].repelval and is_repellor):
                             self.updateCell(self.Coordinate(x, y), value=new_value, is_attractor=is_attractor, is_repellor=is_repellor)
-        """def findRelativePoint(distance, angle, heading, x_base=0, y_base=0):
-        # Calculate the total angle in degrees (account for clockwise direction)
-        total_angle = -(angle + heading)  # Negative to convert clockwise to counterclockwise
-        
-        # Convert angle to radians
-        total_angle_rad = math.radians(total_angle)
-        
-        # Calculate displacements
-        x_displacement = distance * math.cos(total_angle_rad)
-        y_displacement = distance * math.sin(total_angle_rad)
-        
-        # Add displacements to the base-point coordinates
-        x = x_base + x_displacement
-        y = y_base + y_displacement
-        
-        return int(x), int(y)"""
 
     # Trace the path from source to destination
     def trace_path(self, dest: Coordinate):
@@ -178,7 +163,7 @@ class Domain:
 
                         f_new += -self.map[new_i][new_j].attractval + self.map[new_i][new_j].repelval
 
-                        if len(corridor) > 0:
+                        if corridor is not None and len(corridor) > 0:
                             query_point = np.array([new_i, new_j])
                             lcf_penalty = float('inf')
 
