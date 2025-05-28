@@ -1,4 +1,5 @@
 from pymavlink import mavutil
+import time
 
 class Vehicle():
 
@@ -62,10 +63,11 @@ class Vehicle():
         self.connection.waypoint_request_list_send()
         reval = self.connection.recv_match(type="MISSION_COUNT", blocking=True, timeout=10)
         if reval is None:
-            raise RuntimeError("Timed out waiting for MISSION_COUNT")
+            print("No mission uploaded on vehicle.")
+            return
         count = reval.count
         waypoints = []
-        for seq in range(count):
+        for seq in range(1, count):
             self.connection.mav.mission_request_int_send(
                 target_system=self.connection.target_system,
                 target_component=self.connection.target_component,
@@ -75,38 +77,58 @@ class Vehicle():
                 raise RuntimeError("Timed out waiting for MISSION_ITEM_INT")
             waypoints.append(reval)
 
+        self.connection.mav.mission_ack_send(target_system=self.connection.target_system,
+                target_component=self.connection.target_component,
+                type=0)
+
         return waypoints
-    
+
     def assignWPs(self, waypoints):
-        
         self.connection.waypoint_clear_all_send()
         self.connection.waypoint_count_send(len(waypoints))
 
-        while True:
-            reval = self.connection.recv_match(type="MISSION_REQUEST_INT", blocking=True, timeout=10)
+        sent = 0
+        while sent < len(waypoints):
+            reval = self.connection.recv_match(type=["MISSION_REQUEST_INT", "MISSION_REQUEST"], blocking=True, timeout=10)
             if reval is None:
-                break
+                raise RuntimeError(f"Timeout waiting for MISSION_REQUEST_INT at seq {sent}")
             seq = reval.seq
+            lat, lon = waypoints[seq][0], waypoints[seq][1]
+            alt = waypoints[seq][2] if len(waypoints[seq]) > 2 else 0
 
             self.connection.mav.mission_item_int_send(
-                target_system=self.connection.target_system,
-                target_component=self.connection.target_component,
-                seq=seq,
-                frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
-                command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
-                current=0,
-                autocontinue=1,
-                param1=0,
-                param2=0,
-                param3=0,
-                param4=0,
-                x=waypoints[seq][0],
-                y=waypoints[seq][1],
-                z=0)
+                self.connection.target_system,
+                self.connection.target_component,
+                seq,
+                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+                0,  # current
+                1,  # autocontinue
+                0, 0, 0, 0,
+                lat,
+                lon,
+                alt
+            )
+
+            sent += 1
 
         ack = self.connection.recv_match(type="MISSION_ACK", blocking=True, timeout=10)
         if ack is None or ack.type != 0:
-            raise RuntimeError("Mission upload failed")
+            raise RuntimeError("Mission upload failed or was rejected")
 
-        self.connection.mission_set_current_send(0)
+        self.connection.mav.command_long_send(
+            self.connection.target_system,
+            self.connection.target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_MISSION_CURRENT,
+            0, 1, 1,
+            0, 0, 0, 0, 0  # params 2–7 unused
+        )
+        reval = self.connection.recv_match(type="MISSION_CURRENT", blocking=True, timeout=10)
+        if reval is None:
+            raise RuntimeError("Timeout waiting for MISSION_CURRENT")
+        else:
+            print(reval.mission_state, reval.mission_mode, reval.seq)
+
+
+
 
