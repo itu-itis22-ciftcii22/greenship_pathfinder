@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+#BU DOSYA ROS DOSYASI BUNA DOKUNMA EĞER DOKUNACAKSAN BANA SÖYLE 
 import rospy
 from std_msgs.msg import String, Float32MultiArray
 from message_filters import ApproximateTimeSynchronizer, Subscriber
