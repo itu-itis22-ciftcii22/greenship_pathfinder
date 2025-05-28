@@ -21,6 +21,24 @@ class Vehicle():
             raise RuntimeError("Timed out waiting for LOCAL_POSITION_NED")
         return reval
 
+    def getCompass(self):
+        reval = self.connection.recv_match(type='VFR_HUD', blocking=True, timeout=10)
+        if reval is None:
+            raise RuntimeError("Timed out waiting for VFR_HUD")
+        return reval
+
+    def getHome(self):
+        self.connection.mav.command_long_send(
+            self.connection.target_system,
+            self.connection.target_component,
+            mavutil.mavlink.MAV_CMD_GET_HOME_POSITION,
+            0,
+            1, 0, 0, 0, 0, 0, 0)
+        reval = self.connection.recv_match(type='HOME_POSITION', blocking=True, timeout=10)
+        if reval is None:
+            raise RuntimeError("Timed out waiting for HOME_POSITION")
+        return reval
+
     def arm(self):
         self.connection.mav.command_long_send(
             self.connection.target_system,
@@ -42,12 +60,6 @@ class Vehicle():
 
         self.connection.motors_disarmed_wait()
         print('Disarmed!')
-
-    def getCompass(self):
-        reval = self.connection.recv_match(type='VFR_HUD', blocking=True, timeout=10)
-        if reval is None:
-            raise RuntimeError("Timed out waiting for VFR_HUD")
-        return reval
 
     def waitAuto(self):
         while True:
