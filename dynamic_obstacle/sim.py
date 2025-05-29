@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from apf_core import attractive_force, repulsive_force
 from utils import ned_to_global_scaled, global_scaled_to_ned
 from vehicle import Vehicle
-from obstacle import ObstacleSimulator, circular_path
+from obstacle import ObstacleSimulator, circular_between
 import time
 
 
@@ -14,13 +14,10 @@ if __name__ == '__main__':
     plt.ion()
     fig, ax = plt.subplots()
     ax.set_aspect('equal')
-    ax.set_xlim(-20, 20)
-    ax.set_ylim(-20, 20)
+    ax.set_xlim(-50, 50)
+    ax.set_ylim(-50, 50)
     vehicle_dot, = ax.plot([], [], 'bo')
     obstacle_dot, = ax.plot([], [], 'ro')
-
-    obstacle = ObstacleSimulator(lambda t: circular_path(t, 10, 1))
-    obstacle.start()
 
     vehicle = Vehicle("udpin:localhost:14550")
     print("Waiting for AUTO…")
@@ -41,6 +38,12 @@ if __name__ == '__main__':
         for mission_global in missions_global
     ]) + home_ned
 
+    obstacles = []
+    for mission_ned in missions_ned:
+        obstacle = ObstacleSimulator(circular_between, home_ned, mission_ned)
+        obstacle.start()
+        obstacles.append(obstacle)
+
     step_size = 5
     mission_radius = 0.5
     first_move_sent = False
@@ -50,18 +53,19 @@ if __name__ == '__main__':
             msg = vehicle.getLocationGlobal()
             position_global = np.array([msg.lat, msg.lon])
             position_ned = global_scaled_to_ned(home_global[0], home_global[1], position_global[0], position_global[1]) + home_ned
-            obstacle_ned = obstacle.position
+            obstacle_ned = obstacles[0].get_position()
             if np.linalg.norm(mission_ned - position_ned) > mission_radius:
                 f_att = attractive_force(position_ned, mission_ned)
                 f_rep = repulsive_force(position_ned, obstacle_ned)
+                print(f_att, f_rep)
                 total_force = f_att + f_rep
 
                 move = step_size * total_force / np.linalg.norm(total_force)
 
                 next_position_ned = position_ned + move
 
-                vehicle_dot.set_data(position_ned[0], position_ned[1])
-                obstacle_dot.set_data(obstacle_ned[0], obstacle_ned[1])
+                vehicle_dot.set_data([position_ned[0]], [position_ned[1]])
+                obstacle_dot.set_data([obstacle_ned[0]], [obstacle_ned[1]])
                 fig.canvas.draw()
                 fig.canvas.flush_events()
 
@@ -78,8 +82,8 @@ if __name__ == '__main__':
             else:
                 break
 
-
-    obstacle.stop()
-    obstacle.join()
+    for obstacle in obstacles:
+        obstacle.stop()
+        obstacle.join()
     vehicle.connection.set_mode_manual()
     vehicle.connection.close()

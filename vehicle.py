@@ -133,13 +133,13 @@ class Vehicle():
             self.connection.target_component,
             mavutil.mavlink.MAV_CMD_DO_SET_MISSION_CURRENT,
             0, 1, 1,
-            0, 0, 0, 0, 0  # params 2–7 unused
+            0, 0, 0, 0, 0
         )
         reval = self.connection.recv_match(type="MISSION_CURRENT", blocking=True, timeout=10)
         if reval is None:
             raise RuntimeError("Timeout waiting for MISSION_CURRENT")
-        else:
-            print(reval.mission_state, reval.mission_mode, reval.seq)
+        """else:
+            print(reval.mission_state, reval.mission_mode, reval.seq)"""
 
 
 

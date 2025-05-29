@@ -3,17 +3,19 @@ import numpy as np
 
 # Parametreler
 k_att = 1.0
-k_rep = 100.0
-rep_range = 2.5
+k_rep = 10000.0
+rep_range = 20
 
 def attractive_force(pos, goal):
     return k_att * (goal - pos)
 
-def repulsive_force(pos, obstacles):
+def repulsive_force(pos, obs):
     force = np.zeros(2)
-    for obs in obstacles:
-        diff = pos - obs
-        dist = np.linalg.norm(diff)
-        if dist < rep_range and dist != 0:
-            force += k_rep * (1.0 / dist - 1.0 / rep_range) / (dist ** 3) * diff
+    print(pos, obs)
+    diff = pos - obs
+    print(diff)
+    dist = np.linalg.norm(diff)
+    print(dist, rep_range)
+    if dist < rep_range and dist != 0:
+        force += k_rep * (1.0 / dist - 1.0 / rep_range) / (dist ** 3) * diff
     return force
