@@ -1,4 +1,7 @@
 import numpy as np
+import matplotlib
+matplotlib.use('Qt5Agg')
+import matplotlib.pyplot as plt
 from apf_core import attractive_force, repulsive_force
 from utils import ned_to_global_scaled, global_scaled_to_ned
 from vehicle import Vehicle
@@ -7,6 +10,14 @@ import time
 
 
 if __name__ == '__main__':
+
+    plt.ion()
+    fig, ax = plt.subplots()
+    ax.set_aspect('equal')
+    ax.set_xlim(-20, 20)
+    ax.set_ylim(-20, 20)
+    vehicle_dot, = ax.plot([], [], 'bo')
+    obstacle_dot, = ax.plot([], [], 'ro')
 
     obstacle = ObstacleSimulator(lambda t: circular_path(t, 10, 1))
     obstacle.start()
@@ -49,9 +60,10 @@ if __name__ == '__main__':
 
                 next_position_ned = position_ned + move
 
-                print(f"Missions NED: {mission_ned}\n")
-                print(f"Obstacle at: {obstacle_ned}\n")
-                print(f"Moving to {(next_position_ned)}\n")
+                vehicle_dot.set_data(position_ned[0], position_ned[1])
+                obstacle_dot.set_data(obstacle_ned[0], obstacle_ned[1])
+                fig.canvas.draw()
+                fig.canvas.flush_events()
 
                 next_lat, next_lon = ned_to_global_scaled(home_global[0], home_global[1], next_position_ned[0], next_position_ned[1])
 
