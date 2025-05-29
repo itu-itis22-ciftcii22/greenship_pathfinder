@@ -8,8 +8,8 @@ import time
 
 if __name__ == '__main__':
 
-    obs_sim = ObstacleSimulator(lambda t: circular_path(t, 10, 0.2))
-    obs_sim.start()
+    obstacle = ObstacleSimulator(lambda t: circular_path(t, 10, 1))
+    obstacle.start()
 
     vehicle = Vehicle("udpin:localhost:14550")
     print("Waiting for AUTO…")
@@ -30,38 +30,44 @@ if __name__ == '__main__':
         for mission_global in missions_global
     ]) + home_ned
 
-
-    step_size = 3
+    step_size = 5
     mission_radius = 0.5
     first_move_sent = False
 
     for mission_ned in missions_ned:
-        msg = vehicle.getLocationGlobal()
-        position_global = np.array([msg.lat, msg.lon])
-        position_ned = global_scaled_to_ned(home_global[0], home_global[1], position_global[0], position_global[1]) + home_ned
-        obstacle_ned = obs_sim.position
-        if np.linalg.norm(mission_ned - position_ned) > mission_radius:
-            f_att = attractive_force(position_ned, mission_ned)
-            f_rep = repulsive_force(position_ned, obstacle_ned)
-            total_force = f_att + f_rep
+        while True:
+            msg = vehicle.getLocationGlobal()
+            position_global = np.array([msg.lat, msg.lon])
+            position_ned = global_scaled_to_ned(home_global[0], home_global[1], position_global[0], position_global[1]) + home_ned
+            obstacle_ned = obstacle.position
+            if np.linalg.norm(mission_ned - position_ned) > mission_radius:
+                f_att = attractive_force(position_ned, mission_ned)
+                f_rep = repulsive_force(position_ned, obstacle_ned)
+                total_force = f_att + f_rep
 
-            move = step_size * total_force / np.linalg.norm(total_force)
+                move = step_size * total_force / np.linalg.norm(total_force)
 
-            next_position_ned = position_ned + move
+                next_position_ned = position_ned + move
 
-            next_lat, next_lon = ned_to_global_scaled(home_global[0], home_global[1], next_position_ned[0], next_position_ned[1])
+                print(f"Missions NED: {mission_ned}\n")
+                print(f"Obstacle at: {obstacle_ned}\n")
+                print(f"Moving to {(next_position_ned)}\n")
 
-            vehicle.assignWPs([(next_lat, next_lon)])
+                next_lat, next_lon = ned_to_global_scaled(home_global[0], home_global[1], next_position_ned[0], next_position_ned[1])
 
-            if not first_move_sent:
-                vehicle.arm()
-                first_move_sent = True
-                time.sleep(0.5)
+                vehicle.assignWPs([(next_lat, next_lon)])
 
-            time.sleep(0.2)
-        else:
-            continue
+                if not first_move_sent:
+                    vehicle.arm()
+                    first_move_sent = True
+                    time.sleep(0.5)
 
-    obs_sim.stop()
-    obs_sim.join()
+                time.sleep(0.2)
+            else:
+                break
+
+
+    obstacle.stop()
+    obstacle.join()
+    vehicle.connection.set_mode_manual()
     vehicle.connection.close()
