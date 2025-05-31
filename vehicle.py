@@ -61,15 +61,15 @@ class Vehicle():
         self.connection.motors_disarmed_wait()
         print('Disarmed!')
 
-    def waitAuto(self):
+    def getMode(self):
         while True:
             msg = self.connection.recv_match(type='HEARTBEAT', blocking=True, timeout=1)
             if msg is None:
                 continue
             mode_flags = msg.base_mode
             if mode_flags & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED:
-                if self.connection.flightmode.upper() == 'AUTO':
-                    break
+                return self.connection.flightmode.upper()
+
 
     def getWPList(self):
         self.connection.waypoint_request_list_send()

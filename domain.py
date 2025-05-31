@@ -100,16 +100,20 @@ class Domain:
         return path
 
     # Implement the A* search algorithm
-    def a_star_search(self, src: Coordinate, dest: Coordinate, corridor=None):
+    def a_star_search(self, src: Coordinate, dest: Coordinate, corridor=None, moving_obstacles=None):
         # Check if the source and destination are valid
         if not self.isValid(src) or not self.isValid(dest):
             print("Source or destination is invalid")
-            return
+            print("Source:")
+            print(src.row, src.col)
+            print("Destination:")
+            print(dest.row, dest.col)
+            return None
 
         # Check if we are already at the destination
         if src.row == dest.row and src.col == dest.col:
             print("We are already at the destination")
-            return
+            return None
 
         # Initialize the closed list (visited cells)
         closed_list = [[False for _ in range(self.ncol)] for _ in range(self.nrow)]
@@ -173,6 +177,14 @@ class Domain:
                                     lcf_penalty = d
 
                             f_new += lcf_penalty ** 2
+
+                        for moving_obstacle in moving_obstacles:
+                            distance = ((new_i - moving_obstacle.row) ** 2 + (new_j - moving_obstacle.col) ** 2) ** 0.5
+                            if distance <= 4:
+                                penalty = np.exp(np.log(50) * (4 - distance) / (4 - 1))
+                                f_new += penalty
+
+
 
                         # If the cell is not in the open list or the new f value is smaller
                         if (cell_costs[new_i][new_j].f > f_new):
