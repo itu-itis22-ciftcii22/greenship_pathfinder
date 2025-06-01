@@ -3,28 +3,41 @@ import time
 
 class Vehicle():
 
-    def __init__(self, port):
-        self.connection = mavutil.mavlink_connection(port)
+    def __init__(self, port, baud=None):
+        if baud:
+            self.connection = mavutil.mavlink_connection(port, baud)
+        else:
+            self.connection = mavutil.mavlink_connection(port)
         self.connection.wait_heartbeat()
         print("Heartbeat from system (system %u component %u)" 
               % (self.connection.target_system, self.connection.target_component))
 
+    def getLocationRaw(self):
+        reval = self.connection.recv_match(type='GPS_RAW_INT', blocking=True, timeout=10)
+        if reval is None:
+            print("Timed out waiting for GPS_RAW_INT")
+            return None
+        return reval
+
     def getLocationGlobal(self):
         reval = self.connection.recv_match(type='GLOBAL_POSITION_INT', blocking=True, timeout=10)
         if reval is None:
-            raise RuntimeError("Timed out waiting for GLOBAL_POSITION_INT")
+            print("Timed out waiting for GLOBAL_POSITION_INT")
+            return None
         return reval
         
     def getLocationLocal(self):
         reval = self.connection.recv_match(type='LOCAL_POSITION_NED', blocking=True, timeout=10)
         if reval is None:
-            raise RuntimeError("Timed out waiting for LOCAL_POSITION_NED")
+            print("Timed out waiting for LOCAL_POSITION_NED")
+            return None
         return reval
 
     def getCompass(self):
         reval = self.connection.recv_match(type='VFR_HUD', blocking=True, timeout=10)
         if reval is None:
-            raise RuntimeError("Timed out waiting for VFR_HUD")
+            print("Timed out waiting for VFR_HUD")
+            return None
         return reval
 
     def getHome(self):
@@ -36,7 +49,8 @@ class Vehicle():
             1, 0, 0, 0, 0, 0, 0)
         reval = self.connection.recv_match(type='HOME_POSITION', blocking=True, timeout=10)
         if reval is None:
-            raise RuntimeError("Timed out waiting for HOME_POSITION")
+            print("Timed out waiting for HOME_POSITION")
+            return None
         return reval
 
     def arm(self):
@@ -76,17 +90,20 @@ class Vehicle():
         reval = self.connection.recv_match(type="MISSION_COUNT", blocking=True, timeout=10)
         if reval is None:
             print("No mission uploaded on vehicle.")
-            return
+            return None
         count = reval.count
         waypoints = []
         for seq in range(1, count):
-            self.connection.mav.mission_request_int_send(
-                target_system=self.connection.target_system,
-                target_component=self.connection.target_component,
-                seq=seq)
-            reval = self.connection.recv_match(type="MISSION_ITEM_INT", blocking=True, timeout=10)
-            if reval is None:
-                raise RuntimeError("Timed out waiting for MISSION_ITEM_INT")
+            while True:
+                self.connection.mav.mission_request_int_send(
+                    target_system=self.connection.target_system,
+                    target_component=self.connection.target_component,
+                    seq=seq)
+                reval = self.connection.recv_match(type="MISSION_ITEM_INT", blocking=True, timeout=10)
+                if reval is None:
+                    print("Timed out waiting for MISSION_ITEM_INT")
+                else:
+                    break
             waypoints.append(reval)
 
         self.connection.mav.mission_ack_send(target_system=self.connection.target_system,
@@ -126,7 +143,7 @@ class Vehicle():
 
         ack = self.connection.recv_match(type="MISSION_ACK", blocking=True, timeout=10)
         if ack is None or ack.type != 0:
-            raise RuntimeError("Mission upload failed or was rejected")
+            print("Mission upload failed or was rejected")
 
         self.connection.mav.command_long_send(
             self.connection.target_system,
@@ -137,7 +154,7 @@ class Vehicle():
         )
         reval = self.connection.recv_match(type="MISSION_CURRENT", blocking=True, timeout=10)
         if reval is None:
-            raise RuntimeError("Timeout waiting for MISSION_CURRENT")
+            print("Timeout waiting for MISSION_CURRENT")
         """else:
             print(reval.mission_state, reval.mission_mode, reval.seq)"""
 
