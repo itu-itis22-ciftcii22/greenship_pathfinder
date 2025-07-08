@@ -3,6 +3,7 @@ import time
 
 class Vehicle():
 
+    # Bağlantıyı başlatır. Port'un baudu 115200'ten farklı ise parametrelerde belirtilmesi gerekir.
     def __init__(self, port, baud=None):
         if baud:
             self.connection = mavutil.mavlink_connection(port, baud)
@@ -12,6 +13,9 @@ class Vehicle():
         print("Heartbeat from system (system %u component %u)" 
               % (self.connection.target_system, self.connection.target_component))
 
+    # Birincil GPS'den işlenmemiş konum bilgisini döndürür.
+    # Döndürülen nesne .lat, .lon niteliklerinde sırayla lattitude, longitude bilgilerini
+    # int32_t tipinde derece*10^7 biçiminde içerir.
     def getLocationRaw(self):
         reval = self.connection.recv_match(type='GPS_RAW_INT', blocking=True, timeout=10)
         if reval is None:
@@ -19,20 +23,19 @@ class Vehicle():
             return None
         return reval
 
+    # İşlenmiş konum bilgisini döndürür.
+    # Döndürülen nesne .lat, .lon niteliklerinde sırayla lattitude, longitude bilgilerini
+    # int32_t tipinde derece*10^7 biçiminde içerir.
     def getLocationGlobal(self):
         reval = self.connection.recv_match(type='GLOBAL_POSITION_INT', blocking=True, timeout=10)
         if reval is None:
             print("Timed out waiting for GLOBAL_POSITION_INT")
             return None
         return reval
-        
-    def getLocationLocal(self):
-        reval = self.connection.recv_match(type='LOCAL_POSITION_NED', blocking=True, timeout=10)
-        if reval is None:
-            print("Timed out waiting for LOCAL_POSITION_NED")
-            return None
-        return reval
 
+    # Pusula bilgisini döndürür.
+    # Döndürülen nesne .heading niteliğinde doğrultu bilgisini
+    # int16_t tipinde derece biçiminde içerir.
     def getCompass(self):
         reval = self.connection.recv_match(type='VFR_HUD', blocking=True, timeout=10)
         if reval is None:
@@ -40,6 +43,9 @@ class Vehicle():
             return None
         return reval
 
+    # Ev konum bilgisini döndürür.
+    # Döndürülen nesne .lattitude, .longitude niteliklerinde sırayla lattitude, longitude
+    # bilgilerini int32_t tipinde derece*10^7 biçiminde içerir.
     def getHome(self):
         self.connection.mav.command_long_send(
             self.connection.target_system,
@@ -53,6 +59,7 @@ class Vehicle():
             return None
         return reval
 
+    # Araca arm komutunu gönderip, arm gerçekleşene kadar bekler.
     def arm(self):
         self.connection.mav.command_long_send(
             self.connection.target_system,
@@ -64,6 +71,7 @@ class Vehicle():
         self.connection.motors_armed_wait()
         print('Armed!')
 
+    # Araca disarm komutunu gönderip, disarm gerçekleşene kadar bekler.
     def disarm(self):
         self.connection.mav.command_long_send(
             self.connection.target_system,
@@ -75,6 +83,8 @@ class Vehicle():
         self.connection.motors_disarmed_wait()
         print('Disarmed!')
 
+    # Geçerli uçuş modunu döndürür.
+    # Döndürülen string uçuş modunun ismini tümü büyük harf biçiminde içerir
     def getMode(self):
         while True:
             msg = self.connection.recv_match(type='HEARTBEAT', blocking=True, timeout=1)
@@ -84,7 +94,9 @@ class Vehicle():
             if mode_flags & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED:
                 return self.connection.flightmode.upper()
 
-
+    # Geçerli görev noktalarının bilgilerini MISSION_ITEM_INT nesne listesi olarak döndürür.
+    # MISSION_ITEM_INT nesnesinin yapısını https://mavlink.io/en/messages/common.html#MISSION_ITEM_INT
+    # bağlantısından inceleyebilirsiniz.
     def getWPList(self):
         self.connection.waypoint_request_list_send()
         reval = self.connection.recv_match(type="MISSION_COUNT", blocking=True, timeout=10)
@@ -112,6 +124,9 @@ class Vehicle():
 
         return waypoints
 
+    # Araca sıralanmış görev noktaları tipinde görev atar.
+    # waypoints: (lat, lon) tuple'lerinin listesi
+    # lat, lon: lattitude, longitude; int32_t tipinde, derece*10^7 biçiminde
     def assignWPs(self, waypoints):
         self.connection.waypoint_clear_all_send()
         self.connection.waypoint_count_send(len(waypoints))
