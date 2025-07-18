@@ -218,6 +218,7 @@ import math
 import numpy as np
 import rospy
 from std_msgs.msg import Float32MultiArray
+from geometry_msgs.msg import Point
 import signal
 import sys
 import time
@@ -272,8 +273,14 @@ def obstacle_callback(msg):
         y = current_position[1] + r * np.sin(theta_rad)
         obstacle_list.append(np.array([x, y]))
 
-def start_listener():
-    rospy.Subscriber('/obstacles', Float32MultiArray, obstacle_callback)
+def publish_position():
+    global current_position, current_position_pub
+    msg = Point()
+    msg.x = current_position[0]
+    msg.y = current_position[1]
+    msg.z = 0
+    current_position_pub.publish(msg)
+    
 
 if __name__ == '__main__':
     plt.ion()
@@ -288,12 +295,13 @@ if __name__ == '__main__':
         obstacles_dot.append(dot)
 
     rospy.init_node('apf_planner')
-    start_listener()
     rate = rospy.Rate(0.5)
+    rospy.Subscriber('/obstacles', Float32MultiArray, obstacle_callback)
+    current_position_pub = rospy.Publisher('/apf_planner/current_position', Point, queue_size=2)
+    rospy.Timer(rospy.Duration(1/rate), publish_position)
+
     domain = Domain(300, 300)
     print("Started")
-
-    # rospy.Timer(rospy.Duration(secs=1/rate), self._publishers)
 
     # Initialize MAVROS vehicle
     vehicle = Vehicle_Mavros()
