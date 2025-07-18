@@ -1,7 +1,23 @@
+import sys
+import signal
 import rospy
-from autopath_core.ros_interface import RosIO
-from autopath_core.vehicle_interface import Vehicle
 from autopath_core.pathfinder import NavDomain
+from autopath_core.vehicle_interface import Vehicle
+from autopath_core.ros_interface import RosIO
+
+def clean_exit(self, signum=None, frame=None):
+    rospy.loginfo("Exiting and cleaning up...")
+    global vehicle
+    try:
+        if vehicle:
+            self.vehicle.setMode("MANUAL")
+            self.vehicle.disarm()
+    except Exception as e:
+        rospy.logerr(f"Error during cleanup: {str(e)}")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, self.clean_exit)
+signal.signal(signal.SIGTERM, self.clean_exit)
 
 if __name__ == "__main__":
     try:
