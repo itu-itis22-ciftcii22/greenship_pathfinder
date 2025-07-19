@@ -1,0 +1,10 @@
+<launch>
+  <!-- Launch MAVROS with a config file (edit as needed) -->
+  <include file="$(find mavros)/launch/apm.launch" />
+
+  <!-- Launch your obstacle publisher node -->
+  <node pkg="greenship_pathfinder" type="dynamic_obstacle_simulator.py" name="dynamic_obstacle_simulation" output="screen" />
+
+  <!-- Launch your APF planner node -->
+  <node pkg="greenship_pathfinder" type="autopath_core_start.py" name="autopath_core" output="screen" />
+</launch>
