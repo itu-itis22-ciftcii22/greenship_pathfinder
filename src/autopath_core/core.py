@@ -8,7 +8,7 @@ from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import PoseStamped
 
 class Commander:
-    def __init__(self, rate : rospy.Rate, domain : NavDomain, vehicle: Vehicle):
+    def __init__(self, rate, domain : NavDomain, vehicle: Vehicle):
         """Initialize the Commander node
         
         Args:
@@ -17,7 +17,8 @@ class Commander:
             vehicle: Vehicle interface for control
         """
         # Configuration parameters
-        self.rate = rate
+        self.rate = rospy.Rate(rate)
+        self.rate_value = rate
         self.domain = domain
         self.vehicle = vehicle
         
@@ -47,8 +48,8 @@ class Commander:
         self.vehicle_pos_pub_seq = 0
                         
         # Start monitoring and publishing loops
-        rospy.Timer(rospy.Duration(1.0), self._monitor_timeouts)
-        rospy.Timer(rospy.Duration(0.1), self._publish_vehicle_position)  # 10Hz updates
+        rospy.Timer(rospy.Duration(10.0/self.rate_value), self._monitor_timeouts)
+        rospy.Timer(rospy.Duration(1.0/self.rate_value), self._publish_vehicle_position)  # Use rate from constructor
 
     def _dynamic_obstacle_callback(self, msg):
         """Convert polar coordinate obstacles to NED coordinates
@@ -57,7 +58,7 @@ class Commander:
         We convert these to NED coordinates accounting for vehicle position.
         """
         with self._lock:  # Thread safety for vehicle position access
-            self.dynamic_obstacle_ned_list = []
+            self._dynamic_obstacle_ned_list = []  # Access the underlying list directly
             data = msg.data
             
             if len(data) % 2 != 0:
@@ -70,14 +71,14 @@ class Commander:
                     theta_deg = float(data[i + 1])  # Angle in degrees
                     
                     # Convert polar to cartesian coordinates
-                    x = self.vehicle_ned[0] + r * math.cos(math.radians(theta_deg))
-                    y = self.vehicle_ned[1] + r * math.sin(math.radians(theta_deg))
+                    x = self._vehicle_ned[0] + r * math.cos(math.radians(theta_deg))
+                    y = self._vehicle_ned[1] + r * math.sin(math.radians(theta_deg))
                     
                     # Store as numpy array for efficient operations
-                    self.dynamic_obstacle_ned_list.append(np.array((x, y)))
+                    self._dynamic_obstacle_ned_list.append(np.array((x, y)))
                     
-                if self._dynamic_obstacle_ned_list:
-                    rospy.logdebug(f"Updated {len(self._dynamic_obstacle_ned_list)} dynamic obstacles")
+                """if self._dynamic_obstacle_ned_list:
+                    rospy.logdebug(f"Updated {len(self._dynamic_obstacle_ned_list)} dynamic obstacles")"""
                 self._last_obstacle_update = rospy.Time.now()
             except (ValueError, IndexError) as e:
                 rospy.logerr(f"Error processing obstacle data: {e}")
@@ -125,6 +126,15 @@ class Commander:
             
     def _publish_vehicle_position(self, event):
         """Publish vehicle NED position as PoseStamped"""
+        # Convert current global position to NED
+        current_ned = global_to_ned(
+            self.vehicle.home_position_global.latitude, self.vehicle.home_position_global.longitude,
+            self.vehicle.vehicle_position_global.latitude, self.vehicle.vehicle_position_global.longitude,
+            self.home_ned[0], self.home_ned[1]
+        )
+        self.vehicle_ned = current_ned
+            
+        # Create and publish message
         msg = PoseStamped()
         msg.header.seq = self.vehicle_pos_pub_seq
         msg.header.stamp = rospy.Time.now()
@@ -170,17 +180,26 @@ class Commander:
     def _convert_waypoints(self):
         """Convert global waypoints to NED coordinates"""
         self.mission_ned_list = []
-        for waypoint in self.vehicle.current_waypoints:
+        for i, waypoint in enumerate(self.vehicle.current_waypoints):
+            rospy.loginfo(f"Converting waypoint {i+1}:")
+            rospy.loginfo(f"  Waypoint global: lat={waypoint.x_lat:.8f}, lon={waypoint.y_long:.8f}")
+            rospy.loginfo(f"  Home reference: lat={self.home_global[0]:.8f}, lon={self.home_global[1]:.8f}")
+            
             ned_pos = global_to_ned(
                 self.home_global[0], self.home_global[1],
                 waypoint.x_lat, waypoint.y_long,
                 self.home_ned[0], self.home_ned[1]
             )
+            rospy.loginfo(f"  Converted to NED: N={ned_pos[0]:.1f}, E={ned_pos[1]:.1f}")
             self.mission_ned_list.append(np.array(ned_pos))
             
     def execute_mission(self):
         """Execute the mission sequence"""
         rospy.loginfo_once("Mission executor node started")
+        
+        # Give MAVROS topics time to fully establish
+        rospy.loginfo("Waiting for MAVROS connections to stabilize...")
+        rospy.sleep(2.0)  # Wait for subscribers to establish
         
         MISSION_RADIUS = 2.0  # meters, distance to consider waypoint reached
         
@@ -199,6 +218,8 @@ class Commander:
             self.vehicle.home_position_global.longitude
         ])
         rospy.loginfo(f"Home position set to: lat={self.home_global[0]:.6f}, lon={self.home_global[1]:.6f}")
+        rospy.loginfo(f"Vehicle current global position: lat={self.vehicle.vehicle_position_global.latitude:.6f}, lon={self.vehicle.vehicle_position_global.longitude:.6f}")
+        rospy.loginfo(f"NED origin at grid: N={self.home_ned[0]:.1f}, E={self.home_ned[1]:.1f}")
         
         # Wait for mission waypoints
         if not self._wait_for(
@@ -233,67 +254,77 @@ class Commander:
             
             target_coord = self.domain.Coordinate(*map(int, np.round(target_ned)))
             
-            def reached_waypoint():
-                return np.linalg.norm(target_ned - self.vehicle_ned) <= MISSION_RADIUS
-
-            if not self._wait_for(
-                reached_waypoint,
-                f"arrival at waypoint {i+1}",
-                timeout=60
-            ):
-                if rospy.is_shutdown():
-                    return False
-                rospy.logwarn(f"Timeout reaching waypoint {i+1}, skipping to next")
-                continue
-                
             if not self.vehicle.state.guided:
                 rospy.logerr("Lost GUIDED mode! Aborting mission")
                 return False
                 
-            # Path planning
-            current_coord = self.domain.Coordinate(*map(int, np.round(self.vehicle_ned)))
-            obstacle_coords = [
-                self.domain.Coordinate(*map(int, np.round(obs))) 
-                for obs in self.dynamic_obstacle_ned_list
-            ]
+            # Keep trying to reach the waypoint until timeout
+            reached = False
+            start_time = rospy.Time.now()
+            timeout_duration = rospy.Duration(60.0)  # 60 seconds timeout
             
-            try:
-                # Try to find path avoiding obstacles
-                path = self.domain.a_star_search(
-                    current_coord, 
-                    target_coord,
-                    moving_obstacles=obstacle_coords
-                )
-                
-                if not path:
-                    rospy.logwarn_throttle(5.0, "No valid path found, waiting for clear path...")
-                    self.rate.sleep()
-                    continue
+            while not reached and not rospy.is_shutdown():
+                if (rospy.Time.now() - start_time) > timeout_duration:
+                    rospy.logwarn(f"Timeout reaching waypoint {i+1}, skipping to next")
+                    break
                     
-                path_len = len(path)
-                rospy.logdebug(f"Found path with {path_len} waypoints")
+                # Check if we've reached the waypoint
+                current_distance = np.linalg.norm(target_ned - self.vehicle_ned)
+                if current_distance <= MISSION_RADIUS:
+                    rospy.loginfo(f"Reached waypoint {i+1}")
+                    reached = True
+                    break
                 
-                # Take next waypoint with a reasonable look-ahead
-                look_ahead = min(3, path_len - 1)
-                next_coord = path[look_ahead]
-                next_ned = np.array([next_coord.row, next_coord.col])
-                
-                # Convert to global coordinates and send
-                next_global = ned_to_global(
-                    self.home_ned[0], self.home_ned[1],
-                    next_ned[0], next_ned[1],
-                    self.home_global[0], self.home_global[1]
-                )
-                if not self.vehicle.setTargetPositionGlobal(*next_global):
-                    rospy.logwarn_throttle(2.0, "Failed to set next waypoint")
-                else:
-                    rospy.logdebug(f"Moving to waypoint at NED: {next_ned}")
+                # If not reached, update path planning and movement
+                try:
+                    # Try to find path avoiding obstacles
+                    current_coord = self.domain.Coordinate(*map(int, np.round(self.vehicle_ned)))
+                    obstacle_coords = [
+                        self.domain.Coordinate(*map(int, np.round(obs))) 
+                        for obs in self.dynamic_obstacle_ned_list
+                    ]
                     
-            except Exception as e:
-                rospy.logerr(f"Error in path planning: {e}")
+                    path = self.domain.a_star_search(
+                        current_coord, 
+                        target_coord,
+                        moving_obstacles=obstacle_coords
+                    )
+                    
+                    if not path:
+                        rospy.logwarn_throttle(5.0, "No valid path found, retrying...")
+                        self.rate.sleep()
+                        continue
+                        
+                    path_len = len(path)
+                    rospy.logdebug(f"Found path with {path_len} waypoints")
+                    
+                    # Take next waypoint with a reasonable look-ahead
+                    look_ahead = min(3, path_len - 1)
+                    next_coord = path[look_ahead]
+                    next_ned = np.array([next_coord.row, next_coord.col])
+                    
+                    # Convert to global coordinates and send
+                    next_global = ned_to_global(
+                        self.home_ned[0], self.home_ned[1],
+                        next_ned[0], next_ned[1],
+                        self.home_global[0], self.home_global[1]
+                    )
+                    if not self.vehicle.setTargetPositionGlobal(*next_global):
+                        rospy.logwarn_throttle(2.0, "Failed to set next waypoint")
+                    else:
+                        rospy.logdebug(f"Moving to intermediate point at NED: {next_ned}")
+                        
+                except Exception as e:
+                    rospy.logerr(f"Error in path planning: {e}")
+                    
                 self.rate.sleep()
-                continue
-
+        
+        # Mission complete - switch back to MANUAL mode
+        if not rospy.is_shutdown():
+            rospy.loginfo("Mission complete - switching to MANUAL mode")
+            self.vehicle.setMode("MANUAL")
+            return True
+        return False
 
 
 # Coordinate conversion functions (could be moved to a utilities module)

@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <node pkg="greenship_pathfinder" 
+        type="autopath_core_starter.py" 
+        name="autopath_core" 
+        output="screen">
+    <param name="log_level" value="info"/>
+  </node>
+</launch>

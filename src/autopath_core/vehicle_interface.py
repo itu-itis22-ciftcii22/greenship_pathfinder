@@ -7,8 +7,9 @@ from geographic_msgs.msg import GeoPoint, GeoPoseStamped
 from threading import Lock
 
 class Vehicle:
-    def __init__(self, rate : rospy.Rate):
-        self.rate = rate
+    def __init__(self, rate):
+        self.rate = rospy.Rate(rate)
+        self.rate_value = rate
         self.state = State()
         self.home_position_global = GeoPoint() # geographic_msgs/GeoPoint
         self.vehicle_position_global = GeoPoint() # geographic_msgs/GeoPoint
@@ -30,7 +31,7 @@ class Vehicle:
         self.target_global_pub_seq = 0
         self.target_global_pub_flag = False
         self.target_global = GeoPoseStamped()
-        rospy.Timer(rospy.Duration(secs=1/rate), self._publish_target_global)
+        rospy.Timer(rospy.Duration(1.0/self.rate_value), self._publish_target_global)
 
     def _state_cb(self, msg: State):
         """Update vehicle state from MAVROS state message"""
