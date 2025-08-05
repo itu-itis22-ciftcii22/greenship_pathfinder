@@ -164,13 +164,13 @@ if __name__ == "__main__":
         domain_size = 300
         domain = NavDomain(domain_size, domain_size)
         vehicle = Vehicle(rate)
-        command = CommanderManeuver(rate, domain, vehicle)
+        command = CommanderCollisionAvoidance(rate, domain, vehicle)
         
         rospy.logdebug("Starting autopath_core with debug logging enabled")
         
         while not rospy.is_shutdown():
             rospy.loginfo("Starting new mission execution")
-            success = command.execute_task_code_maneuver()
+            success = command.execute_task_code_collision_avoidance()
             
             if rospy.is_shutdown():
                 break
