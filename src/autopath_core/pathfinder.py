@@ -1,5 +1,6 @@
 import numpy as np
 import heapq
+from typing import List
 class NavDomain:
     class Cell:
         def __init__(self):
@@ -73,7 +74,7 @@ class NavDomain:
         # path.append(self.Coordinate(row, col))
         path.reverse()
         return path
-    def a_star_search(self, src: Coordinate, dest: Coordinate, corridor=None, moving_obstacles=None):
+    def a_star_search(self, src: Coordinate, dest: Coordinate, corridor=None, moving_obstacles: List[Coordinate] = []):
         if not self.isValid(src) or not self.isValid(dest):
             print("Source or destination is invalid")
             print("Source:")

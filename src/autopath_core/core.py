@@ -6,6 +6,11 @@ from autopath_core.pathfinder import NavDomain
 from autopath_core.vehicle_interface import Vehicle
 from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import PoseStamped
+from scipy.spatial import KDTree
+
+MIN_OBJECT_DISTANCE_THRESHOLD = 1
+OBJECT_WEIGHT_VALUE = 25
+OBJECT_AREA_RADIUS = 4
 
 class Commander:
     def __init__(self, rate, domain : NavDomain, vehicle: Vehicle):
@@ -31,6 +36,12 @@ class Commander:
         self._home_global = np.zeros(2)
         self._mission_ned_list = []
         self._dynamic_obstacle_ned_list = []
+        self._static_obstacle_ned_list = []
+        self._red_buoy_ned_list = []
+        self._red_buoy_ned_kdtree = None
+        self._green_buoy_ned_list = []
+        self._green_buoy_ned_kdtree = None
+        self._cardinal_ned_list = []
         
         # Last update timestamps for monitoring 
         self._last_obstacle_update = rospy.Time.now()
@@ -82,7 +93,109 @@ class Commander:
                 self._last_obstacle_update = rospy.Time.now()
             except (ValueError, IndexError) as e:
                 rospy.logerr(f"Error processing obstacle data: {e}")
-                
+
+    def _red_buoy_callback(self, msg):
+        with self._lock:
+            data = msg.data
+
+            for i in range(0, len(data), 2):
+                if i+1 < len(data):
+                    yaw_deg = data[i]
+                    dist = data[i+1]
+                    
+                    if dist > 0:
+                        theta_rad = np.deg2rad(yaw_deg)
+                        x = self._vehicle_ned[0] + dist * np.cos(theta_rad)
+                        y = self._vehicle_ned[1] + dist * np.sin(theta_rad)
+                        
+                        new_position = np.array([x, y])
+                        
+                        # KDTree ile en yakın komşu ara
+                        is_new_buoy = True
+                        if isinstance(self._red_buoy_ned_kdtree, KDTree):
+                            distance, _ = self._red_buoy_ned_kdtree.query(new_position)
+                            if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
+                                is_new_buoy = False
+                                rospy.logdebug(f"Mevcut KIRMIZI duba tespit edildi: Açı={yaw_deg:.1f}°, "
+                                            f"Mesafe={dist:.1f}m, En yakın dubaya uzaklık={distance:.1f}m")
+                        
+                        if is_new_buoy:
+                            self._red_buoy_ned_list.append(new_position)
+                            self.domain.updateMap(self.domain.Coordinate(x, y), "red_buoy", True, OBJECT_WEIGHT_VALUE,
+                                                  OBJECT_AREA_RADIUS, is_repellor=True)
+                            rospy.logdebug(f"YENİ kırmızı duba eklendi: Açı={yaw_deg:.1f}°, "
+                                        f"Mesafe={dist:.1f}m, Pozisyon=({x:.1f}, {y:.1f})")
+                        
+            self._red_buoy_ned_kdtree = KDTree(self._red_buoy_ned_list)
+
+    def _green_buoy_callback(self, msg):
+        with self._lock:
+            data = msg.data
+
+            for i in range(0, len(data), 2):
+                if i+1 < len(data):
+                    yaw_deg = data[i]
+                    dist = data[i+1]
+                    
+                    if dist > 0:
+                        theta_rad = np.deg2rad(yaw_deg)
+                        x = self._vehicle_ned[0] + dist * np.cos(theta_rad)
+                        y = self._vehicle_ned[1] + dist * np.sin(theta_rad)
+                        
+                        new_position = np.array([x, y])
+                        
+                        # KDTree ile en yakın komşu ara
+                        is_new_buoy = True
+                        if isinstance(self._green_buoy_ned_kdtree, KDTree):
+                            distance, _ = self._green_buoy_ned_kdtree.query(new_position)
+                            if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
+                                is_new_buoy = False
+                                rospy.logdebug(f"Mevcut YEŞİL duba tespit edildi: Açı={yaw_deg:.1f}°, "
+                                            f"Mesafe={dist:.1f}m, En yakın dubaya uzaklık={distance:.1f}m")
+                        
+                        if is_new_buoy:
+                            self._green_buoy_ned_list.append(new_position)
+                            self.domain.updateMap(self.domain.Coordinate(x, y), "green_buoy", True, OBJECT_WEIGHT_VALUE,
+                                                  OBJECT_AREA_RADIUS, is_repellor=True)
+                            rospy.logdebug(f"YENİ yeşil duba eklendi: Açı={yaw_deg:.1f}°, "
+                                        f"Mesafe={dist:.1f}m, Pozisyon=({x:.1f}, {y:.1f})")
+                        
+            self._green_buoy_ned_kdtree = KDTree(self._red_buoy_ned_list)
+
+    def _static_obstacle_callback(self, msg):
+        with self._lock:
+            data = msg.data
+
+            for i in range(0, len(data), 2):
+                if i+1 < len(data):
+                    yaw_deg = data[i]
+                    dist = data[i+1]
+                    
+                    if dist > 0:
+                        theta_rad = np.deg2rad(yaw_deg)
+                        x = self._vehicle_ned[0] + dist * np.cos(theta_rad)
+                        y = self._vehicle_ned[1] + dist * np.sin(theta_rad)
+                        
+                        new_position = np.array([x, y])
+                        
+                        # KDTree ile en yakın komşu ara
+                        is_new_obstacle = True
+                        for obstacle_ned in self._static_obstacle_ned_list:
+                            distance = np.linalg.norm(new_position - obstacle_ned)
+                            if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
+                                is_new_obstacle = False
+                                rospy.logdebug(f"Mevcut engel tespit edildi: Açı={yaw_deg:.1f}°, "
+                                            f"Mesafe={dist:.1f}m, En yakın engele uzaklık={distance:.1f}m")
+                        
+                        if is_new_obstacle:
+                            self._static_obstacle_ned_list.append(new_position)
+                            self.domain.updateMap(self.domain.Coordinate(x, y), "obstacle", True, OBJECT_WEIGHT_VALUE,
+                                                  OBJECT_AREA_RADIUS, is_repellor=True)
+                            rospy.logdebug(f"YENİ engel eklendi: Açı={yaw_deg:.1f}°, "
+                                        f"Mesafe={dist:.1f}m, Pozisyon=({x:.1f}, {y:.1f})")
+                        
+            self._red_buoy_ned_kdtree = KDTree(self._red_buoy_ned_list)
+                    
     def _monitor_timeouts(self, event):
         """Monitor data freshness and log warnings if data is stale"""
         now = rospy.Time.now()
@@ -91,7 +204,7 @@ class Commander:
         if (now - self._last_obstacle_update) > self.obstacle_timeout:
             rospy.logwarn_throttle(
                 10.0,  # Warn every 10 seconds
-                "No obstacle updates received for {:.1f} seconds".format(
+                "No dynamic obstacle updates received for {:.1f} seconds".format(
                     (now - self._last_obstacle_update).to_sec()
                 )
             )
@@ -123,6 +236,42 @@ class Commander:
         """Thread-safe access to obstacle list"""
         with self._lock:
             return self._dynamic_obstacle_ned_list.copy()
+
+    @property
+    def static_obstacle_ned_list(self):
+        """Thread-safe access to obstacle list"""
+        with self._lock:
+            return self._static_obstacle_ned_list.copy()
+        
+    @property
+    def red_buoy_ned_list(self):
+        """Thread-safe access to obstacle list"""
+        with self._lock:
+            return self._red_buoy_ned_list.copy()
+        
+    @property
+    def green_buoy_ned_list(self):
+        """Thread-safe access to obstacle list"""
+        with self._lock:
+            return self._green_buoy_ned_list.copy()
+    
+    @property
+    def red_buoy_ned_kdtree(self):
+        """Thread-safe access to obstacle list"""
+        with self._lock:
+            if self._red_buoy_ned_kdtree:
+                return self._red_buoy_ned_kdtree.copy()
+            else:
+                return None
+        
+    @property
+    def green_buoy_ned_kdtree(self):
+        """Thread-safe access to obstacle list"""
+        with self._lock:
+            if self._green_buoy_ned_kdtree:
+                return self._green_buoy_ned_kdtree.copy()
+            else:
+                return None
             
     def _publish_vehicle_position(self, event):
         """Publish vehicle NED position as PoseStamped"""
@@ -192,6 +341,31 @@ class Commander:
             )
             rospy.loginfo(f"  Converted to NED: N={ned_pos[0]:.1f}, E={ned_pos[1]:.1f}")
             self.mission_ned_list.append(np.array(ned_pos))
+
+    def _find_buoy_pairs(self, max_pair_distance=6):
+        pairs = []
+        
+        if self.red_buoy_ned_kdtree is None or self.green_buoy_ned_kdtree is None:
+            return pairs
+        
+        for red_idx, red_pos in enumerate(self.red_buoy_ned_kdtree):
+            distance, green_idx = self.green_buoy_ned_kdtree.query(red_pos)
+            
+            if distance <= max_pair_distance:
+                pairs.append((red_idx, green_idx))
+        
+        
+        return pairs
+
+    def _find_corridor(self, pairs):
+        midpoints = []
+        for red_idx, green_idx in pairs:
+            red_pos = self.red_buoy_ned_list[red_idx]
+            green_pos = self.green_buoy_ned_list[green_idx]
+            mid_x = (red_pos[0] + green_pos[0]) / 2.0
+            mid_y = (red_pos[1] + green_pos[1]) / 2.0
+            midpoints.append((mid_x, mid_y))
+        return midpoints
             
     def execute_mission(self):
         """Execute the mission sequence"""
