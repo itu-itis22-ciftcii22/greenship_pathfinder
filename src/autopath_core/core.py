@@ -52,8 +52,14 @@ class Commander:
         self.position_timeout = rospy.Duration(5.0)  # Position data timeout
         
         # Publishers and subscribers
-        rospy.Subscriber('/fusion/dynamic_obstacles', Float32MultiArray, 
+        rospy.Subscriber('/fusion_output/dynamic_obstacles', Float32MultiArray, 
                         self._dynamic_obstacle_callback, queue_size=2)
+        rospy.Subscriber('/fusion_output/red_buoy', Float32MultiArray, 
+                        self._red_buoy_callback, queue_size=2)
+        rospy.Subscriber('/fusion_output/green_buoy', Float32MultiArray, 
+                        self._green_buoy_callback, queue_size=2)
+        rospy.Subscriber('/fusion_output/static_obstacles', Float32MultiArray, 
+                        self._static_obstacle_callback, queue_size=2)
         self.vehicle_pos_pub = rospy.Publisher('autopath_core/vehicle_position', 
                                              PoseStamped, queue_size=2)
         self.vehicle_pos_pub_seq = 0
