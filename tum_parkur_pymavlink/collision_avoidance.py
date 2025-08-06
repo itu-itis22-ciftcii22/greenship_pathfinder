@@ -283,7 +283,7 @@ def moving_obstacle_callback(msg):
 def start_listener():
     rospy.Subscriber('/fusion_output/red_buoy', Float32MultiArray, red_buoy_callback)
     rospy.Subscriber('/fusion_output/green_buoy', Float32MultiArray, green_buoy_callback)
-    rospy.Subscriber('/fusion_output/moving_obstacle', Float32MultiArray, moving_obstacle_callback)
+    rospy.Subscriber('/fusion_output/dynamic_obstacles', Float32MultiArray, moving_obstacle_callback)
     rospy.loginfo("Fusion output kırmızı duba dinleniyor: /fusion_output/red_buoy")
     rospy.loginfo("Fusion output yeşil duba dinleniyor: /fusion_output/green_buoy")
 
