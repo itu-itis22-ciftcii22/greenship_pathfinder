@@ -1,0 +1,91 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- ========================================== -->
+    <!-- AUTONOMOUS SHIP SENSORS & FUSION LAUNCH   -->
+    <!-- ========================================== -->
+    
+    <!-- Parameters -->
+    <arg name="camera_model" default="$(find autonomous_ship)/models/yolo11n.pt" />
+    <arg name="camera_source" default="0" />
+    <arg name="camera_conf" default="0.5" />
+    <arg name="camera_imgsz" default="640" />
+    <arg name="lidar_port" default="/dev/ttyUSB0" />
+    <arg name="lidar_baudrate" default="115200" />
+    <arg name="log_level" default="INFO" />
+    
+    <!-- Set ROS Log Level -->
+    <env name="ROSCONSOLE_CONFIG_FILE" value="$(find autonomous_ship)/config/rosconsole.conf"/>
+    
+    <!-- ========================================== -->
+    <!-- RPLiDAR A3 Driver -->
+    <!-- ========================================== -->
+    <node name="rplidar_node" pkg="rplidar_ros" type="rplidar_node" output="screen">
+        <param name="serial_port" type="string" value="$(arg lidar_port)"/>
+        <param name="serial_baudrate" type="int" value="$(arg lidar_baudrate)"/>
+        <param name="frame_id" type="string" value="laser"/>
+        <param name="inverted" type="bool" value="false"/>
+        <param name="angle_compensate" type="bool" value="true"/>
+        <param name="scan_mode" type="string" value="Standard"/>
+    </node>
+    
+    <!-- ========================================== -->
+    <!-- Enhanced LiDAR Processing -->
+    <!-- ========================================== -->
+    <node name="enhanced_lidar_publisher" pkg="autonomous_ship" type="lidar_yayin_v3.py" 
+          output="screen" required="true">
+        <param name="log_level" value="$(arg log_level)" />
+        <remap from="/scan" to="/scan" />
+        <remap from="/lidar_distances" to="/lidar_distances" />
+    </node>
+    
+    <!-- ========================================== -->
+    <!-- Enhanced Camera Detection -->
+    <!-- ========================================== -->
+    <node name="enhanced_camera_detector" pkg="autonomous_ship" type="cv_kod_v4.py" 
+          output="screen" required="true"
+          args="--weights $(arg camera_model) --source $(arg camera_source) --conf $(arg camera_conf) --imgsz $(arg camera_imgsz)">
+        <param name="log_level" value="$(arg log_level)" />
+        <remap from="/camera_detections" to="/camera_detections" />
+    </node>
+    
+    <!-- ========================================== -->
+    <!-- Enhanced Sensor Fusion -->
+    <!-- ========================================== -->
+    <node name="enhanced_fusion_system" pkg="autonomous_ship" type="fusion_v3.py" 
+          output="screen" required="true">
+        <param name="log_level" value="$(arg log_level)" />
+        <param name="angle_tolerance" value="35.0" />
+        <param name="confidence_threshold" value="0.6" />
+        <param name="fusion_timeout" value="2.0" />
+        <remap from="/camera_detections" to="/camera_detections" />
+        <remap from="/lidar_distances" to="/lidar_distances" />
+        <remap from="/fusion_output" to="/fusion_output" />
+        <remap from="/navigation_obstacles" to="/navigation_obstacles" />
+        <remap from="/fusion_status" to="/fusion_status" />
+    </node>
+    
+    <!-- ========================================== -->
+    <!-- System Monitor -->
+    <!-- ========================================== -->
+    <node name="system_monitor" pkg="autonomous_ship" type="system_test.py" 
+          output="screen" required="false">
+        <param name="monitoring_mode" value="true" />
+    </node>
+    
+    <!-- ========================================== -->
+    <!-- Static Transforms -->
+    <!-- ========================================== -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="base_link_to_laser"
+          args="0.0 0.0 0.15 0.0 0.0 0.0 base_link laser" />
+          
+    <node pkg="tf2_ros" type="static_transform_publisher" name="base_link_to_camera"
+          args="0.2 0.0 0.3 0.0 0.0 0.0 base_link camera_link" />
+    
+    <!-- ========================================== -->
+    <!-- Logging Configuration -->
+    <!-- ========================================== -->
+    <group if="$(eval log_level == 'DEBUG')">
+        <param name="/autonomous_ship/debug_mode" value="true" />
+    </group>
+    
+</launch>
