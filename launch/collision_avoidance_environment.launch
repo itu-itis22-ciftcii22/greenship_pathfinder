@@ -1,0 +1,5 @@
+<launch>
+
+  <node pkg="greenship_pathfinder" type="collision_avoidance_simulator.py" name="collision_avoidance_simulator" output="screen" />
+
+</launch>

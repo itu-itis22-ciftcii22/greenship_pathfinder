@@ -7,6 +7,7 @@ from autopath_core.vehicle_interface import Vehicle
 from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import PoseStamped
 from scipy.spatial import KDTree
+from scipy.spatial.transform import Rotation
 
 MIN_OBJECT_DISTANCE_THRESHOLD = 1
 OBJECT_WEIGHT_VALUE = 25
@@ -44,11 +45,11 @@ class Commander:
         self._cardinal_ned_list = []
         
         # Last update timestamps for monitoring 
-        self._last_obstacle_update = rospy.Time.now()
+        self._last_dynamic_obstacle_update = rospy.Time.now()
         self._last_position_update = rospy.Time.now()
         
         # Configuration
-        self.obstacle_timeout = rospy.Duration(2.0)  # Consider obstacles stale after 2s
+        self.dynamic_obstacle_timeout = rospy.Duration(2.0)  # Consider obstacles stale after 2s
         self.position_timeout = rospy.Duration(5.0)  # Position data timeout
         
         # Publishers and subscribers
@@ -60,43 +61,34 @@ class Commander:
                         self._green_buoy_callback, queue_size=2)
         rospy.Subscriber('/fusion_output/static_obstacles', Float32MultiArray, 
                         self._static_obstacle_callback, queue_size=2)
-        self.vehicle_pos_pub = rospy.Publisher('autopath_core/vehicle_position', 
+        self.vehicle_pos_pub = rospy.Publisher('autopath_core/vehicle_relative_pose', 
                                              PoseStamped, queue_size=2)
         self.vehicle_pos_pub_seq = 0
                         
         # Start monitoring and publishing loops
         rospy.Timer(rospy.Duration(10.0/self.rate_value), self._monitor_timeouts)
-        rospy.Timer(rospy.Duration(1.0/self.rate_value), self._publish_vehicle_position)  # Use rate from constructor
+        rospy.Timer(rospy.Duration(1.0/self.rate_value), self._publish_vehicle_relative_pose)  # Use rate from constructor
 
     def _dynamic_obstacle_callback(self, msg):
-        """Convert polar coordinate obstacles to NED coordinates
-        
-        The incoming message contains obstacles in polar coordinates relative to vehicle.
-        We convert these to NED coordinates accounting for vehicle position.
-        """
-        with self._lock:  # Thread safety for vehicle position access
-            self._dynamic_obstacle_ned_list = []  # Access the underlying list directly
+        with self._lock:
+            self._dynamic_obstacle_ned_list = []
             data = msg.data
-            
-            if len(data) % 2 != 0:
-                rospy.logwarn("Invalid obstacle data: odd number of elements")
-                return
                 
             try:
                 for i in range(0, len(data), 2):
-                    r = float(data[i])  # Range in meters
-                    theta_deg = float(data[i + 1])  # Angle in degrees
+                    dist = float(data[i])  # Distance in meters
+                    theta_relative_deg = float(data[i + 1])  # Angle relative to vehicle heading (degrees)
                     
-                    # Convert polar to cartesian coordinates
-                    x = self._vehicle_ned[0] + r * math.cos(math.radians(theta_deg))
-                    y = self._vehicle_ned[1] + r * math.sin(math.radians(theta_deg))
+                    theta_ned_deg = self.vehicle.vehicle_heading_compass + theta_relative_deg
+                    theta_ned_deg = theta_ned_deg % 360
                     
-                    # Store as numpy array for efficient operations
+                    theta_ned_rad = math.radians(theta_ned_deg)
+                    x = self._vehicle_ned[0] + dist * math.cos(theta_ned_rad)
+                    y = self._vehicle_ned[1] + dist * math.sin(theta_ned_rad)
+                    
                     self._dynamic_obstacle_ned_list.append(np.array((x, y)))
-                    
-                """if self._dynamic_obstacle_ned_list:
-                    rospy.logdebug(f"Updated {len(self._dynamic_obstacle_ned_list)} dynamic obstacles")"""
-                self._last_obstacle_update = rospy.Time.now()
+
+                self._last_dynamic_obstacle_update = rospy.Time.now()
             except (ValueError, IndexError) as e:
                 rospy.logerr(f"Error processing obstacle data: {e}")
 
@@ -104,124 +96,125 @@ class Commander:
         with self._lock:
             data = msg.data
 
-            for i in range(0, len(data), 2):
-                if i+1 < len(data):
-                    yaw_deg = data[i]
-                    dist = data[i+1]
+            if len(data) % 2 != 0:
+                rospy.logwarn("Invalid obstacle data: odd number of elements")
+                return
+            try:
+                for i in range(0, len(data), 2):
+                    dist = float(data[i])  # Range in meters
+                    theta_relative_deg = float(data[i + 1])  # Angle relative to vehicle heading (degrees)
                     
-                    if dist > 0:
-                        theta_rad = np.deg2rad(yaw_deg)
-                        x = self._vehicle_ned[0] + dist * np.cos(theta_rad)
-                        y = self._vehicle_ned[1] + dist * np.sin(theta_rad)
+                    theta_ned_deg = self.vehicle.vehicle_heading_compass + theta_relative_deg
+                    theta_ned_deg = theta_ned_deg % 360
+                    
+                    theta_ned_rad = math.radians(theta_ned_deg)
+                    x = self._vehicle_ned[0] + dist * np.cos(theta_ned_rad)
+                    y = self._vehicle_ned[1] + dist * np.sin(theta_ned_rad)
+                    
+                    new_position = np.array([x, y])
+                    
+                    is_new_buoy = True
+                    if isinstance(self._red_buoy_ned_kdtree, KDTree):
+                        distance, _ = self._red_buoy_ned_kdtree.query(new_position)
+                        if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
+                            is_new_buoy = False
+                    
+                    if is_new_buoy:
+                        self._red_buoy_ned_list.append(new_position)
+                        self.domain.updateMap(self.domain.Coordinate(x, y), "red_buoy", True, OBJECT_WEIGHT_VALUE,
+                                                OBJECT_AREA_RADIUS, is_repellor=True)
                         
-                        new_position = np.array([x, y])
-                        
-                        # KDTree ile en yakın komşu ara
-                        is_new_buoy = True
-                        if isinstance(self._red_buoy_ned_kdtree, KDTree):
-                            distance, _ = self._red_buoy_ned_kdtree.query(new_position)
-                            if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
-                                is_new_buoy = False
-                                rospy.logdebug(f"Mevcut KIRMIZI duba tespit edildi: Açı={yaw_deg:.1f}°, "
-                                            f"Mesafe={dist:.1f}m, En yakın dubaya uzaklık={distance:.1f}m")
-                        
-                        if is_new_buoy:
-                            self._red_buoy_ned_list.append(new_position)
-                            self.domain.updateMap(self.domain.Coordinate(x, y), "red_buoy", True, OBJECT_WEIGHT_VALUE,
-                                                  OBJECT_AREA_RADIUS, is_repellor=True)
-                            rospy.logdebug(f"YENİ kırmızı duba eklendi: Açı={yaw_deg:.1f}°, "
-                                        f"Mesafe={dist:.1f}m, Pozisyon=({x:.1f}, {y:.1f})")
-                        
-            self._red_buoy_ned_kdtree = KDTree(self._red_buoy_ned_list)
+                self._red_buoy_ned_kdtree = KDTree(self._red_buoy_ned_list)
+            except (ValueError, IndexError) as e:
+                rospy.logerr(f"Error processing obstacle data: {e}")
 
     def _green_buoy_callback(self, msg):
         with self._lock:
             data = msg.data
 
-            for i in range(0, len(data), 2):
-                if i+1 < len(data):
-                    yaw_deg = data[i]
-                    dist = data[i+1]
+            if len(data) % 2 != 0:
+                rospy.logwarn("Invalid obstacle data: odd number of elements")
+                return
+            try:
+                for i in range(0, len(data), 2):
+                    dist = float(data[i])  # Range in meters
+                    theta_relative_deg = float(data[i + 1])  # Angle relative to vehicle heading (degrees)
                     
-                    if dist > 0:
-                        theta_rad = np.deg2rad(yaw_deg)
-                        x = self._vehicle_ned[0] + dist * np.cos(theta_rad)
-                        y = self._vehicle_ned[1] + dist * np.sin(theta_rad)
+                    theta_ned_deg = self.vehicle.vehicle_heading_compass + theta_relative_deg
+                    theta_ned_deg = theta_ned_deg % 360
+                    
+                    theta_ned_rad = math.radians(theta_ned_deg)
+                    x = self._vehicle_ned[0] + dist * np.cos(theta_ned_rad)
+                    y = self._vehicle_ned[1] + dist * np.sin(theta_ned_rad)
+                    
+                    new_position = np.array([x, y])
+                    
+                    is_new_buoy = True
+                    if isinstance(self._green_buoy_ned_kdtree, KDTree):
+                        distance, _ = self._green_buoy_ned_kdtree.query(new_position)
+                        if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
+                            is_new_buoy = False
+                    
+                    if is_new_buoy:
+                        self._green_buoy_ned_list.append(new_position)
+                        self.domain.updateMap(self.domain.Coordinate(x, y), "green_buoy", True, OBJECT_WEIGHT_VALUE,
+                                                OBJECT_AREA_RADIUS, is_repellor=True)
                         
-                        new_position = np.array([x, y])
-                        
-                        # KDTree ile en yakın komşu ara
-                        is_new_buoy = True
-                        if isinstance(self._green_buoy_ned_kdtree, KDTree):
-                            distance, _ = self._green_buoy_ned_kdtree.query(new_position)
-                            if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
-                                is_new_buoy = False
-                                rospy.logdebug(f"Mevcut YEŞİL duba tespit edildi: Açı={yaw_deg:.1f}°, "
-                                            f"Mesafe={dist:.1f}m, En yakın dubaya uzaklık={distance:.1f}m")
-                        
-                        if is_new_buoy:
-                            self._green_buoy_ned_list.append(new_position)
-                            self.domain.updateMap(self.domain.Coordinate(x, y), "green_buoy", True, OBJECT_WEIGHT_VALUE,
-                                                  OBJECT_AREA_RADIUS, is_repellor=True)
-                            rospy.logdebug(f"YENİ yeşil duba eklendi: Açı={yaw_deg:.1f}°, "
-                                        f"Mesafe={dist:.1f}m, Pozisyon=({x:.1f}, {y:.1f})")
-                        
-            self._green_buoy_ned_kdtree = KDTree(self._red_buoy_ned_list)
+                self._green_buoy_ned_kdtree = KDTree(self._green_buoy_ned_list)
+            except (ValueError, IndexError) as e:
+                rospy.logerr(f"Error processing obstacle data: {e}")
 
     def _static_obstacle_callback(self, msg):
         with self._lock:
             data = msg.data
 
-            for i in range(0, len(data), 2):
-                if i+1 < len(data):
-                    yaw_deg = data[i]
-                    dist = data[i+1]
+            if len(data) % 2 != 0:
+                rospy.logwarn("Invalid obstacle data: odd number of elements")
+                return
+            try:
+                for i in range(0, len(data), 2):
+                    dist = float(data[i])  # Range in meters
+                    theta_relative_deg = float(data[i + 1])  # Angle relative to vehicle heading (degrees)
                     
-                    if dist > 0:
-                        theta_rad = np.deg2rad(yaw_deg)
-                        x = self._vehicle_ned[0] + dist * np.cos(theta_rad)
-                        y = self._vehicle_ned[1] + dist * np.sin(theta_rad)
+                    theta_ned_deg = self.vehicle.vehicle_heading_compass + theta_relative_deg
+                    theta_ned_deg = theta_ned_deg % 360
+                    
+                    theta_ned_rad = math.radians(theta_ned_deg)
+                    x = self._vehicle_ned[0] + dist * np.cos(theta_ned_rad)
+                    y = self._vehicle_ned[1] + dist * np.sin(theta_ned_rad)
+                    
+                    new_position = np.array([x, y])
+                    
+                    is_new_obstacle = True
+                    for obstacle_ned in self._static_obstacle_ned_list:
+                        distance = np.linalg.norm(new_position - obstacle_ned)
+                        if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
+                            is_new_obstacle = False
+                    
+                    if is_new_obstacle:
+                        self._static_obstacle_ned_list.append(new_position)
+                        self.domain.updateMap(self.domain.Coordinate(x, y), "obstacle", True, OBJECT_WEIGHT_VALUE,
+                                                OBJECT_AREA_RADIUS, is_repellor=True)
                         
-                        new_position = np.array([x, y])
-                        
-                        # KDTree ile en yakın komşu ara
-                        is_new_obstacle = True
-                        for obstacle_ned in self._static_obstacle_ned_list:
-                            distance = np.linalg.norm(new_position - obstacle_ned)
-                            if distance < MIN_OBJECT_DISTANCE_THRESHOLD:
-                                is_new_obstacle = False
-                                rospy.logdebug(f"Mevcut engel tespit edildi: Açı={yaw_deg:.1f}°, "
-                                            f"Mesafe={dist:.1f}m, En yakın engele uzaklık={distance:.1f}m")
-                        
-                        if is_new_obstacle:
-                            self._static_obstacle_ned_list.append(new_position)
-                            self.domain.updateMap(self.domain.Coordinate(x, y), "obstacle", True, OBJECT_WEIGHT_VALUE,
-                                                  OBJECT_AREA_RADIUS, is_repellor=True)
-                            rospy.logdebug(f"YENİ engel eklendi: Açı={yaw_deg:.1f}°, "
-                                        f"Mesafe={dist:.1f}m, Pozisyon=({x:.1f}, {y:.1f})")
-                        
-            self._red_buoy_ned_kdtree = KDTree(self._red_buoy_ned_list)
+            except (ValueError, IndexError) as e:
+                rospy.logerr(f"Error processing obstacle data: {e}")
                     
     def _monitor_timeouts(self, event):
         """Monitor data freshness and log warnings if data is stale"""
         now = rospy.Time.now()
         
         # Check obstacle data freshness
-        if (now - self._last_obstacle_update) > self.obstacle_timeout:
+        if (now - self._last_dynamic_obstacle_update) > self.dynamic_obstacle_timeout:
             rospy.logwarn_throttle(
                 10.0,  # Warn every 10 seconds
-                "No dynamic obstacle updates received for {:.1f} seconds".format(
-                    (now - self._last_obstacle_update).to_sec()
-                )
+                f"No dynamic obstacle updates received for {(now - self._last_dynamic_obstacle_update).to_sec():.1f} seconds"    
             )
             
         # Check position data freshness
         if (now - self._last_position_update) > self.position_timeout:
             rospy.logwarn_throttle(
                 10.0,
-                "No position updates received for {:.1f} seconds".format(
-                    (now - self._last_position_update).to_sec()
-                )
+                f"No position updates received for {(now - self._last_position_update).to_sec():.1f} seconds"                   
             )
             
     @property
@@ -279,8 +272,8 @@ class Commander:
             else:
                 return None
             
-    def _publish_vehicle_position(self, event):
-        """Publish vehicle NED position as PoseStamped"""
+    def _publish_vehicle_relative_pose(self, event):
+        """Publish vehicle NED pose relative to home NED position as PoseStamped"""
         # Convert current global position to NED
         current_ned = global_to_ned(
             self.vehicle.home_position_global.latitude, self.vehicle.home_position_global.longitude,
@@ -295,10 +288,11 @@ class Commander:
         msg.header.stamp = rospy.Time.now()
         msg.header.frame_id = 'ned'
         
-        with self._lock:
-            msg.pose.position.x = self._vehicle_ned[0]  # North
-            msg.pose.position.y = self._vehicle_ned[1]  # East
-            msg.pose.position.z = 0.0  # Down (not used)
+        msg.pose.position.x = current_ned[0]  # North
+        msg.pose.position.y = current_ned[1]  # East
+        msg.pose.position.z = 0.0  # Down (not used)
+        rotation = Rotation.from_euler('z', self.vehicle.vehicle_heading_compass)
+        msg.pose.orientation = rotation.as_quat()  # Returns [x, y, z, w]
             
         self.vehicle_pos_pub.publish(msg)
         self.vehicle_pos_pub_seq += 1

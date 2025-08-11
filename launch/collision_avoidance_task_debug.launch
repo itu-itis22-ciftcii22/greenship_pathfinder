@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<launch>
+  <node pkg="greenship_pathfinder" 
+        type="collision_avoidance.py" 
+        name="collision_avoidance" 
+        output="screen">
+    <param name="log_level" value="debug"/>
+    <env name="ROS_LOG_LEVEL" value="debug"/>
+    <!-- Enable debug output for all ROS logs -->
+    <env name="ROSCONSOLE_FORMAT" value="[${severity}] [${time}] ${node}: ${message}"/>
+  </node>
+</launch>

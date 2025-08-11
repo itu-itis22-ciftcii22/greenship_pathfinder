@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <node pkg="greenship_pathfinder" 
+        type="collision_avoidance.py" 
+        name="collision_avoidance" 
+        output="screen">
+    <param name="log_level" value="info"/>
+  </node>
+</launch>

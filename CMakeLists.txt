@@ -159,6 +159,9 @@ include_directories(
 catkin_install_python(PROGRAMS
   scripts/autopath_core_starter.py
   scripts/dynamic_obstacle_simulator.py
+  scripts/collision_avoidance_simulator.py
+  scripts/collision_avoidance.py
+  scripts/maneuvering.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

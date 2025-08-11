@@ -1,6 +1,6 @@
 import rospy
 from mavros_msgs.srv import CommandBool, SetMode
-from mavros_msgs.msg import State, HomePosition, WaypointList
+from mavros_msgs.msg import State, HomePosition, WaypointList, VFR_HUD
 from sensor_msgs.msg import NavSatFix
 from geographic_msgs.msg import GeoPoint, GeoPoseStamped
 # Lock for thread-safe access to shared variables
@@ -13,8 +13,8 @@ class Vehicle:
         self.state = State()
         self.home_position_global = GeoPoint() # geographic_msgs/GeoPoint
         self.vehicle_position_global = GeoPoint() # geographic_msgs/GeoPoint
+        self.vehicle_heading_compass = int()
         self.current_waypoints = [] # list of mavros_msgs/Waypoint.msg
-        
         self._lock = Lock()
 
         rospy.wait_for_service('/mavros/cmd/arming')
@@ -24,7 +24,8 @@ class Vehicle:
 
         rospy.Subscriber('/mavros/state', State, self._state_cb)
         rospy.Subscriber('/mavros/home_position/home', HomePosition, self._home_cb)
-        rospy.Subscriber('/mavros/global_position/global', NavSatFix, self._gps_cb)
+        rospy.Subscriber('/mavros/global_position/global', NavSatFix, self._position_cb)
+        rospy.Subscriber('/mavros/vfr_hud', VFR_HUD, self._orientation_cb)
         rospy.Subscriber('/mavros/mission/waypoints', WaypointList, self._wp_list_cb)
 
         self.target_global_pub = rospy.Publisher('/mavros/setpoint_position/global', GeoPoseStamped, queue_size=2)
@@ -52,12 +53,17 @@ class Vehicle:
         rospy.loginfo_once("Home position received")
         rospy.logdebug(f"Home position set to: lat={msg.geo.latitude:.6f}, lon={msg.geo.longitude:.6f}")
 
-    def _gps_cb(self, msg: NavSatFix):
+    def _position_cb(self, msg: NavSatFix):
         """Handle GPS position updates"""
         self.vehicle_position_global.latitude = msg.latitude
         self.vehicle_position_global.longitude = msg.longitude
         self.vehicle_position_global.altitude = msg.altitude
         rospy.logdebug_throttle(5, f"Position: lat={msg.latitude:.6f}, lon={msg.longitude:.6f}, alt={msg.altitude:.1f}")
+
+    def _orientation_cb(self, msg: VFR_HUD):
+        """Handle heading updates"""
+        self.vehicle_heading_compass = msg.heading
+        rospy.logdebug_throttle(5, f"Heading: {msg.heading}")
 
     def _wp_list_cb(self, msg: WaypointList):
         """Handle mission waypoint updates"""
